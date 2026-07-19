@@ -1,0 +1,166 @@
+name: Build
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  SOLUTION: CopyShell.sln
+  CONFIGURATION: Release
+  PLATFORM: x64
+  RUNTIME_IDENTIFIER: win-x64
+  DOTNET_CLI_TELEMETRY_OPTOUT: "1"
+  DOTNET_NOLOGO: "1"
+
+jobs:
+  build:
+    name: Windows x64
+    runs-on: windows-2022
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Detect solution
+        id: solution
+        shell: pwsh
+        run: |
+          if (Test-Path -LiteralPath $env:SOLUTION) {
+            "exists=true" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+            Write-Host "Found $env:SOLUTION."
+          }
+          else {
+            "exists=false" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+            Write-Host "Project skeleton only: $env:SOLUTION has not been created yet."
+          }
+
+      - name: Setup .NET SDK
+        if: steps.solution.outputs.exists == 'true'
+        uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Setup MSBuild
+        if: steps.solution.outputs.exists == 'true'
+        uses: microsoft/setup-msbuild@v3
+        with:
+          msbuild-architecture: x64
+
+      - name: Restore
+        if: steps.solution.outputs.exists == 'true'
+        shell: pwsh
+        run: |
+          msbuild $env:SOLUTION `
+            /m `
+            /t:Restore `
+            /p:Configuration=$env:CONFIGURATION `
+            /p:Platform=$env:PLATFORM
+          if ($LASTEXITCODE -ne 0) {
+            exit $LASTEXITCODE
+          }
+
+      - name: Build solution
+        if: steps.solution.outputs.exists == 'true'
+        shell: pwsh
+        run: |
+          msbuild $env:SOLUTION `
+            /m `
+            /t:Build `
+            /p:Configuration=$env:CONFIGURATION `
+            /p:Platform=$env:PLATFORM `
+            /p:ContinuousIntegrationBuild=true
+          if ($LASTEXITCODE -ne 0) {
+            exit $LASTEXITCODE
+          }
+
+      - name: Run managed tests
+        if: steps.solution.outputs.exists == 'true'
+        shell: pwsh
+        run: |
+          $testProjects = Get-ChildItem `
+            -Path "tests" `
+            -Recurse `
+            -Filter "*.Tests.csproj" `
+            -ErrorAction SilentlyContinue
+
+          if (-not $testProjects) {
+            Write-Host "No managed test projects found."
+            exit 0
+          }
+
+          New-Item `
+            -ItemType Directory `
+            -Path "artifacts\test-results" `
+            -Force | Out-Null
+
+          foreach ($project in $testProjects) {
+            dotnet test $project.FullName `
+              --configuration $env:CONFIGURATION `
+              --no-restore `
+              --logger "trx" `
+              --results-directory "artifacts\test-results"
+            if ($LASTEXITCODE -ne 0) {
+              exit $LASTEXITCODE
+            }
+          }
+
+      - name: Publish application
+        if: steps.solution.outputs.exists == 'true'
+        shell: pwsh
+        run: |
+          $appProject = "src\CopyShell.App\CopyShell.App.csproj"
+          if (-not (Test-Path -LiteralPath $appProject)) {
+            throw "Expected application project was not found: $appProject"
+          }
+
+          dotnet publish $appProject `
+            --configuration $env:CONFIGURATION `
+            --runtime $env:RUNTIME_IDENTIFIER `
+            --self-contained true `
+            --output "artifacts\publish\$env:RUNTIME_IDENTIFIER"
+          if ($LASTEXITCODE -ne 0) {
+            exit $LASTEXITCODE
+          }
+
+      - name: Collect native Shell Extension
+        if: steps.solution.outputs.exists == 'true'
+        shell: pwsh
+        run: |
+          $shellProject = "src\CopyShell.ShellExtension\CopyShell.ShellExtension.vcxproj"
+          if (-not (Test-Path -LiteralPath $shellProject)) {
+            throw "Expected Shell Extension project was not found: $shellProject"
+          }
+
+          $shellOutput = Join-Path `
+            $env:GITHUB_WORKSPACE `
+            "artifacts\shell\$env:RUNTIME_IDENTIFIER\"
+
+          msbuild $shellProject `
+            /m `
+            /t:Build `
+            /p:Configuration=$env:CONFIGURATION `
+            /p:Platform=$env:PLATFORM `
+            "/p:OutDir=$shellOutput"
+          if ($LASTEXITCODE -ne 0) {
+            exit $LASTEXITCODE
+          }
+
+      - name: Upload build artifacts
+        if: steps.solution.outputs.exists == 'true'
+        uses: actions/upload-artifact@v7
+        with:
+          name: CopyShell-${{ env.RUNTIME_IDENTIFIER }}
+          path: artifacts/
+          if-no-files-found: error
+          retention-days: 14

@@ -1,0 +1,15 @@
+.vs/
+.vscode/
+bin/
+obj/
+artifacts/
+*.user
+*.suo
+*.VC.db
+*.VC.opendb
+*.aps
+*.ipch
+Generated Files/
+
+# Local-only design documents
+/docs/ARCHITECTURE.md
