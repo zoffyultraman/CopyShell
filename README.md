@@ -202,4 +202,4 @@ MVP 使用经典 `IContextMenu`：
 
 ## License
 
-CopyShell 使用 [GNU Affero General Public License v3.0](LICENSE)。
+CopyShell 使用 [GNU General Public License v3.0](LICENSE)。
