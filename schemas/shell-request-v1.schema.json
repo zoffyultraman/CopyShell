@@ -1,0 +1,60 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/zoffyultraman/CopyShell/schemas/shell-request-v1.schema.json",
+  "title": "CopyShell Shell Request v1",
+  "type": "object",
+  "additionalProperties": true,
+  "required": [
+    "version",
+    "requestId",
+    "createdAtUtc",
+    "expiresAtUtc",
+    "operation",
+    "sources"
+  ],
+  "properties": {
+    "version": {
+      "const": 1
+    },
+    "requestId": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "createdAtUtc": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "expiresAtUtc": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "operation": {
+      "enum": [
+        "copy",
+        "move",
+        "sync"
+      ]
+    },
+    "sources": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 4096,
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "invoker": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "version": {
+          "type": "string"
+        }
+      }
+    }
+  }
+}

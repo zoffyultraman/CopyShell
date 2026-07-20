@@ -156,11 +156,27 @@ jobs:
             exit $LASTEXITCODE
           }
 
+          $publishDirectory = Join-Path `
+            $env:GITHUB_WORKSPACE `
+            "artifacts\publish\$env:RUNTIME_IDENTIFIER"
+          $extension = Join-Path $shellOutput "CopyShell.ShellExtension.dll"
+          if (-not (Test-Path -LiteralPath $extension)) {
+            throw "Shell Extension output was not found: $extension"
+          }
+
+          Copy-Item -LiteralPath $extension -Destination $publishDirectory -Force
+          Copy-Item `
+            -Path "installer\CopyShell.Installer\*.ps1" `
+            -Destination $publishDirectory `
+            -Force
+          Copy-Item -LiteralPath "LICENSE" -Destination $publishDirectory -Force
+          Copy-Item -LiteralPath "README.md" -Destination $publishDirectory -Force
+
       - name: Upload build artifacts
         if: steps.solution.outputs.exists == 'true'
         uses: actions/upload-artifact@v7
         with:
           name: CopyShell-${{ env.RUNTIME_IDENTIFIER }}
-          path: artifacts/
+          path: artifacts/publish/${{ env.RUNTIME_IDENTIFIER }}/
           if-no-files-found: error
           retention-days: 14

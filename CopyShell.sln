@@ -1,0 +1,57 @@
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.0.31903.59
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "CopyShell.Core", "src\CopyShell.Core\CopyShell.Core.csproj", "{E5D89C49-B998-47BB-BAC1-A5A111D7D7D5}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "CopyShell.Robocopy", "src\CopyShell.Robocopy\CopyShell.Robocopy.csproj", "{15484502-B401-41FD-806B-9A0F1325C034}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "CopyShell.App", "src\CopyShell.App\CopyShell.App.csproj", "{1E90DBF9-B146-47D0-995A-273878A5D258}"
+EndProject
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "CopyShell.ShellExtension", "src\CopyShell.ShellExtension\CopyShell.ShellExtension.vcxproj", "{FE798952-BE09-455B-8949-FCDF9F82274C}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "CopyShell.Core.Tests", "tests\CopyShell.Core.Tests\CopyShell.Core.Tests.csproj", "{70A06858-2352-48D3-8706-D15B538B759F}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "CopyShell.Robocopy.Tests", "tests\CopyShell.Robocopy.Tests\CopyShell.Robocopy.Tests.csproj", "{F1878057-07E2-4925-9F23-6937F0C0828F}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "CopyShell.Protocol.Tests", "tests\CopyShell.Protocol.Tests\CopyShell.Protocol.Tests.csproj", "{BAE9985F-F85F-43CD-9901-6F61A0C2FE9B}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|x64 = Debug|x64
+		Release|x64 = Release|x64
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{E5D89C49-B998-47BB-BAC1-A5A111D7D7D5}.Debug|x64.ActiveCfg = Debug|x64
+		{E5D89C49-B998-47BB-BAC1-A5A111D7D7D5}.Debug|x64.Build.0 = Debug|x64
+		{E5D89C49-B998-47BB-BAC1-A5A111D7D7D5}.Release|x64.ActiveCfg = Release|x64
+		{E5D89C49-B998-47BB-BAC1-A5A111D7D7D5}.Release|x64.Build.0 = Release|x64
+		{15484502-B401-41FD-806B-9A0F1325C034}.Debug|x64.ActiveCfg = Debug|x64
+		{15484502-B401-41FD-806B-9A0F1325C034}.Debug|x64.Build.0 = Debug|x64
+		{15484502-B401-41FD-806B-9A0F1325C034}.Release|x64.ActiveCfg = Release|x64
+		{15484502-B401-41FD-806B-9A0F1325C034}.Release|x64.Build.0 = Release|x64
+		{1E90DBF9-B146-47D0-995A-273878A5D258}.Debug|x64.ActiveCfg = Debug|x64
+		{1E90DBF9-B146-47D0-995A-273878A5D258}.Debug|x64.Build.0 = Debug|x64
+		{1E90DBF9-B146-47D0-995A-273878A5D258}.Release|x64.ActiveCfg = Release|x64
+		{1E90DBF9-B146-47D0-995A-273878A5D258}.Release|x64.Build.0 = Release|x64
+		{FE798952-BE09-455B-8949-FCDF9F82274C}.Debug|x64.ActiveCfg = Debug|x64
+		{FE798952-BE09-455B-8949-FCDF9F82274C}.Debug|x64.Build.0 = Debug|x64
+		{FE798952-BE09-455B-8949-FCDF9F82274C}.Release|x64.ActiveCfg = Release|x64
+		{FE798952-BE09-455B-8949-FCDF9F82274C}.Release|x64.Build.0 = Release|x64
+		{70A06858-2352-48D3-8706-D15B538B759F}.Debug|x64.ActiveCfg = Debug|x64
+		{70A06858-2352-48D3-8706-D15B538B759F}.Debug|x64.Build.0 = Debug|x64
+		{70A06858-2352-48D3-8706-D15B538B759F}.Release|x64.ActiveCfg = Release|x64
+		{70A06858-2352-48D3-8706-D15B538B759F}.Release|x64.Build.0 = Release|x64
+		{F1878057-07E2-4925-9F23-6937F0C0828F}.Debug|x64.ActiveCfg = Debug|x64
+		{F1878057-07E2-4925-9F23-6937F0C0828F}.Debug|x64.Build.0 = Debug|x64
+		{F1878057-07E2-4925-9F23-6937F0C0828F}.Release|x64.ActiveCfg = Release|x64
+		{F1878057-07E2-4925-9F23-6937F0C0828F}.Release|x64.Build.0 = Release|x64
+		{BAE9985F-F85F-43CD-9901-6F61A0C2FE9B}.Debug|x64.ActiveCfg = Debug|x64
+		{BAE9985F-F85F-43CD-9901-6F61A0C2FE9B}.Debug|x64.Build.0 = Debug|x64
+		{BAE9985F-F85F-43CD-9901-6F61A0C2FE9B}.Release|x64.ActiveCfg = Release|x64
+		{BAE9985F-F85F-43CD-9901-6F61A0C2FE9B}.Release|x64.Build.0 = Release|x64
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+EndGlobal
