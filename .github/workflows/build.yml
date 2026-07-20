@@ -192,9 +192,17 @@ jobs:
             throw "Background Worker output was not found: $worker"
           }
 
-          & $worker --health-check
-          if ($LASTEXITCODE -ne 0) {
-            throw "Background Worker health check failed: $LASTEXITCODE"
+          $process = Start-Process `
+            -FilePath $worker `
+            -ArgumentList "--health-check" `
+            -Wait `
+            -PassThru `
+            -NoNewWindow
+          $exitCode = $process.ExitCode
+          $process.Dispose()
+          if ($exitCode -ne 0) {
+            Write-Output "::error title=Background Worker health check::Exit code $exitCode"
+            throw "Background Worker health check failed: $exitCode"
           }
 
       - name: Smoke test Shell Extension
