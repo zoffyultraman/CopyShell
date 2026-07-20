@@ -145,6 +145,11 @@
                         x:Name="StatusText"
                         Foreground="{ThemeResource TextFillColorSecondaryBrush}"
                         Text="准备中…" />
+                    <TextBlock
+                        x:Name="ProgressDetailsText"
+                        Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                        Text=""
+                        Visibility="Collapsed" />
                 </StackPanel>
 
                 <Expander
@@ -162,6 +167,86 @@
                         IsReadOnly="True"
                         TextWrapping="NoWrap" />
                 </Expander>
+
+                <StackPanel Spacing="10">
+                    <Grid>
+                        <TextBlock
+                            FontSize="16"
+                            FontWeight="SemiBold"
+                            Text="任务队列与历史" />
+                        <Button
+                            HorizontalAlignment="Right"
+                            Click="OnRefreshQueueClicked"
+                            Content="刷新" />
+                    </Grid>
+
+                    <ListView
+                        x:Name="QueueList"
+                        MinHeight="150"
+                        MaxHeight="290"
+                        SelectionChanged="OnQueueSelectionChanged"
+                        SelectionMode="Single">
+                        <ListView.ItemTemplate>
+                            <DataTemplate>
+                                <Grid Padding="6,5" ColumnSpacing="12">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel Spacing="2">
+                                        <TextBlock
+                                            FontWeight="SemiBold"
+                                            Text="{Binding Title}" />
+                                        <TextBlock
+                                            MaxWidth="510"
+                                            Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                            Text="{Binding Route}"
+                                            TextTrimming="CharacterEllipsis" />
+                                        <TextBlock
+                                            Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                            Text="{Binding ProgressText}" />
+                                    </StackPanel>
+                                    <TextBlock
+                                        Grid.Column="1"
+                                        VerticalAlignment="Center"
+                                        Text="{Binding StateText}" />
+                                </Grid>
+                            </DataTemplate>
+                        </ListView.ItemTemplate>
+                    </ListView>
+
+                    <StackPanel Orientation="Horizontal" Spacing="8">
+                        <Button
+                            x:Name="PauseQueueButton"
+                            Click="OnPauseQueueClicked"
+                            Content="暂停"
+                            IsEnabled="False" />
+                        <Button
+                            x:Name="ResumeQueueButton"
+                            Click="OnResumeQueueClicked"
+                            Content="恢复"
+                            IsEnabled="False" />
+                        <Button
+                            x:Name="RetryQueueButton"
+                            Click="OnRetryQueueClicked"
+                            Content="重试任务"
+                            IsEnabled="False" />
+                        <Button
+                            x:Name="CancelQueueButton"
+                            Click="OnCancelQueueClicked"
+                            Content="取消任务"
+                            IsEnabled="False" />
+                    </StackPanel>
+
+                    <TextBox
+                        x:Name="QueueDetailsBox"
+                        MinHeight="70"
+                        MaxHeight="150"
+                        AcceptsReturn="True"
+                        IsReadOnly="True"
+                        PlaceholderText="选择任务查看来源、目标、失败摘要和日志"
+                        TextWrapping="Wrap" />
+                </StackPanel>
             </StackPanel>
         </ScrollViewer>
 

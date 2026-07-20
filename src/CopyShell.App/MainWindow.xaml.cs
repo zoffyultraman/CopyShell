@@ -3,8 +3,8 @@ using CopyShell.Core.Abstractions;
 using CopyShell.Core.Models;
 using CopyShell.Core.Protocol;
 using CopyShell.Core.Services;
-using CopyShell.Robocopy;
 using Microsoft.UI;
+using Microsoft.UI.Dispatching;
 using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
@@ -22,26 +22,34 @@ public sealed partial class MainWindow : Window
     private readonly CopyOperation _operation;
     private readonly Guid _taskId;
     private readonly ObservableCollection<string> _sources = [];
+    private readonly ObservableCollection<QueueTaskViewModel> _queueItems = [];
+    private readonly Dictionary<Guid, CopyProgress> _latestProgress = [];
     private readonly CopyTaskPlanner _planner = new(new PhysicalFileSystemProbe());
     private readonly ISyncPreviewService _previewService = new FileSystemSyncPreviewService();
-    private readonly ICopyEngine _engine = new RobocopyEngine(new RobocopyCommandFactory());
-    private readonly TaskJournalStore _journal;
+    private readonly TaskQueueStore _queueStore;
+    private readonly TaskQueueProcessor _processor;
+    private readonly DispatcherQueueTimer _queueRefreshTimer;
     private CancellationTokenSource? _cancellation;
     private bool _isRunning;
+    private bool _draftEnqueued;
+    private bool _isRefreshingQueue;
 
     public MainWindow(
         ShellRequest? request,
         TaskJournalEntry? recovery,
-        TaskJournalStore journal,
+        TaskQueueStore queueStore,
+        TaskQueueProcessor processor,
         string? startupMessage,
         bool startupMessageIsError)
     {
         InitializeComponent();
-        _journal = journal;
+        _queueStore = queueStore;
+        _processor = processor;
         _hasTaskContext = request is not null || recovery is not null;
         _operation = request?.Operation ?? recovery?.Task.Operation ?? CopyOperation.Copy;
         _taskId = recovery?.Task.TaskId ?? Guid.NewGuid();
         SourceList.ItemsSource = _sources;
+        QueueList.ItemsSource = _queueItems;
 
         foreach (var source in request?.Sources ?? recovery?.Task.Sources ?? [])
         {
@@ -65,7 +73,17 @@ public sealed partial class MainWindow : Window
             StartupInfo.IsOpen = true;
         }
 
+        _processor.TaskChanged += OnQueueTaskChanged;
+        _processor.ProgressChanged += OnQueueProgressChanged;
+        _processor.ProcessorError += OnQueueProcessorError;
+        _queueRefreshTimer = DispatcherQueue.CreateTimer();
+        _queueRefreshTimer.Interval = TimeSpan.FromSeconds(1);
+        _queueRefreshTimer.Tick += OnQueueRefreshTick;
+        _queueRefreshTimer.Start();
+        Closed += OnWindowClosed;
+
         UpdateStartButton();
+        _ = RefreshQueueAsync();
     }
 
     private void ConfigureWindow()
@@ -73,7 +91,7 @@ public sealed partial class MainWindow : Window
         Title = "CopyShell";
         var windowHandle = WindowNative.GetWindowHandle(this);
         var windowId = Win32Interop.GetWindowIdFromWindow(windowHandle);
-        AppWindow.GetFromWindowId(windowId).Resize(new SizeInt32(760, 760));
+        AppWindow.GetFromWindowId(windowId).Resize(new SizeInt32(780, 900));
     }
 
     private void ConfigureOperation(CopyOperation operation)
@@ -143,7 +161,6 @@ public sealed partial class MainWindow : Window
         }
 
         BeginRun();
-        var journalStarted = false;
         try
         {
             if (plan.RiskLevel == RiskLevel.Destructive)
@@ -160,44 +177,31 @@ public sealed partial class MainWindow : Window
                 }
             }
 
-            await _journal.BeginAsync(task, plan.PlanHash, _cancellation!.Token);
-            journalStarted = true;
-            var progress = new Progress<CopyProgress>(OnProgress);
-            var result = await _engine.ExecuteAsync(plan, progress, _cancellation!.Token);
-            await RecordResultSafelyAsync(result);
-            journalStarted = false;
+            var queued = await _queueStore.EnqueueAsync(
+                task,
+                plan.PlanHash,
+                _cancellation!.Token);
+            _draftEnqueued = true;
             TaskProgress.IsIndeterminate = false;
-            TaskProgress.Value = result.Outcome == CopyExecutionOutcome.Failed ? 0 : 100;
-            StatusText.Text = RobocopyExitCodeInterpreter.Describe(result.NativeExitCode);
-
-            await ShowMessageAsync(
-                result.Outcome == CopyExecutionOutcome.Failed ? "任务失败" : "任务完成",
-                $"{StatusText.Text}\n\nRobocopy 退出码：{result.NativeExitCode}");
+            TaskProgress.Value = 100;
+            StatusText.Text = "任务已加入队列，将按顺序执行。";
+            AppendLog($"[CopyShell] 任务已入队：{queued.TaskId:D}");
+            await RefreshQueueAsync(queued.TaskId);
         }
         catch (OperationCanceledException)
         {
-            if (journalStarted)
-            {
-                await RecordCanceledSafelyAsync();
-            }
-
             TaskProgress.IsIndeterminate = false;
             TaskProgress.Value = 0;
-            StatusText.Text = "任务已取消。";
-            AppendLog("[CopyShell] 任务已取消。");
+            StatusText.Text = "已取消任务准备。";
+            AppendLog("[CopyShell] 已取消任务准备。");
         }
         catch (Exception exception)
         {
-            if (journalStarted)
-            {
-                await RecordFailureSafelyAsync(exception);
-            }
-
             TaskProgress.IsIndeterminate = false;
             TaskProgress.Value = 0;
-            StatusText.Text = "任务执行失败。";
+            StatusText.Text = "任务入队失败。";
             AppendLog($"[CopyShell] {exception}");
-            await ShowMessageAsync("任务失败", exception.Message);
+            await ShowMessageAsync("无法加入队列", exception.Message);
         }
         finally
         {
@@ -316,7 +320,8 @@ public sealed partial class MainWindow : Window
         LogBox.Text = string.Empty;
         TaskProgress.IsIndeterminate = true;
         TaskProgress.Value = 0;
-        StatusText.Text = "正在启动 Robocopy…";
+        StatusText.Text = "正在准备任务…";
+        ProgressDetailsText.Visibility = Visibility.Collapsed;
     }
 
     private void EndRun()
@@ -338,15 +343,10 @@ public sealed partial class MainWindow : Window
     {
         StartButton.IsEnabled =
             !_isRunning &&
+            !_draftEnqueued &&
             _hasTaskContext &&
             _sources.Count > 0 &&
             !string.IsNullOrWhiteSpace(DestinationBox.Text);
-    }
-
-    private void OnProgress(CopyProgress progress)
-    {
-        StatusText.Text = progress.Message;
-        AppendLog(progress.Message);
     }
 
     private void AppendLog(string line)
@@ -375,45 +375,414 @@ public sealed partial class MainWindow : Window
         };
     }
 
-    private async Task RecordResultSafelyAsync(CopyExecutionResult result)
+    private async void OnRefreshQueueClicked(object sender, RoutedEventArgs e) =>
+        await RefreshQueueAsync();
+
+    private void OnQueueSelectionChanged(
+        object sender,
+        SelectionChangedEventArgs e)
     {
-        try
+        if (QueueList.SelectedItem is not QueueTaskViewModel selected)
         {
-            await _journal.RecordResultAsync(
-                _taskId,
-                result,
-                CancellationToken.None);
+            QueueDetailsBox.Text = string.Empty;
+            UpdateQueueButtons(null);
+            return;
         }
-        catch (Exception exception)
+
+        QueueDetailsBox.Text = FormatQueueDetails(selected.Entry);
+        UpdateQueueButtons(selected.Entry);
+        var progress = GetProgress(selected.Entry);
+        if (progress is not null)
         {
-            AppendLog($"[CopyShell] 无法保存任务结果：{exception.Message}");
+            DisplayProgress(progress);
         }
     }
 
-    private async Task RecordCanceledSafelyAsync()
+    private async void OnPauseQueueClicked(object sender, RoutedEventArgs e)
     {
-        try
+        if (QueueList.SelectedItem is QueueTaskViewModel selected)
         {
-            await _journal.RecordCanceledAsync(_taskId, CancellationToken.None);
-        }
-        catch (Exception exception)
-        {
-            AppendLog($"[CopyShell] 无法保存取消状态：{exception.Message}");
+            await ExecuteQueueActionAsync(
+                selected.TaskId,
+                token => _queueStore.RequestPauseAsync(selected.TaskId, token),
+                "无法暂停任务");
         }
     }
 
-    private async Task RecordFailureSafelyAsync(Exception failure)
+    private async void OnResumeQueueClicked(object sender, RoutedEventArgs e)
+    {
+        if (QueueList.SelectedItem is QueueTaskViewModel selected)
+        {
+            await ExecuteQueueActionAsync(
+                selected.TaskId,
+                token => _queueStore.ResumeAsync(selected.TaskId, token),
+                "无法恢复任务");
+        }
+    }
+
+    private async void OnRetryQueueClicked(object sender, RoutedEventArgs e)
+    {
+        if (QueueList.SelectedItem is QueueTaskViewModel selected)
+        {
+            await ExecuteQueueActionAsync(
+                selected.TaskId,
+                token => _queueStore.RetryAsync(selected.TaskId, token),
+                "无法重试任务");
+        }
+    }
+
+    private async void OnCancelQueueClicked(object sender, RoutedEventArgs e)
+    {
+        if (QueueList.SelectedItem is QueueTaskViewModel selected)
+        {
+            await ExecuteQueueActionAsync(
+                selected.TaskId,
+                token => _queueStore.RequestCancelAsync(selected.TaskId, token),
+                "无法取消任务");
+        }
+    }
+
+    private async Task ExecuteQueueActionAsync(
+        Guid taskId,
+        Func<CancellationToken, Task<QueueTaskEntry>> action,
+        string errorTitle)
     {
         try
         {
-            await _journal.RecordFailureAsync(
-                _taskId,
-                failure.ToString(),
-                CancellationToken.None);
+            var updated = await action(CancellationToken.None);
+            await RefreshQueueAsync(updated.TaskId);
         }
         catch (Exception exception)
         {
-            AppendLog($"[CopyShell] 无法保存失败状态：{exception.Message}");
+            await ShowMessageAsync(errorTitle, exception.Message);
+            await RefreshQueueAsync(taskId);
+        }
+    }
+
+    private async void OnQueueRefreshTick(
+        DispatcherQueueTimer sender,
+        object args) =>
+        await RefreshQueueAsync();
+
+    private void OnWindowClosed(object sender, WindowEventArgs args)
+    {
+        _queueRefreshTimer.Stop();
+        _queueRefreshTimer.Tick -= OnQueueRefreshTick;
+        _processor.TaskChanged -= OnQueueTaskChanged;
+        _processor.ProgressChanged -= OnQueueProgressChanged;
+        _processor.ProcessorError -= OnQueueProcessorError;
+        Closed -= OnWindowClosed;
+    }
+
+    private void OnQueueTaskChanged(QueueTaskEntry entry) =>
+        DispatcherQueue.TryEnqueue(
+            () =>
+            {
+                if (entry.State is not (
+                        QueueTaskState.Running or
+                        QueueTaskState.PauseRequested or
+                        QueueTaskState.CancelRequested))
+                {
+                    _latestProgress.Remove(entry.TaskId);
+                }
+
+                _ = RefreshQueueAsync(entry.TaskId);
+            });
+
+    private void OnQueueProgressChanged(Guid taskId, CopyProgress update) =>
+        DispatcherQueue.TryEnqueue(
+            () =>
+            {
+                var merged = MergeProgress(
+                    _latestProgress.GetValueOrDefault(taskId),
+                    update);
+                _latestProgress[taskId] = merged;
+
+                if ((QueueList.SelectedItem as QueueTaskViewModel)?.TaskId == taskId ||
+                    taskId == _taskId)
+                {
+                    DisplayProgress(merged);
+                }
+            });
+
+    private void OnQueueProcessorError(Exception exception) =>
+        DispatcherQueue.TryEnqueue(
+            () =>
+            {
+                StartupInfo.Title = "任务队列暂时不可用";
+                StartupInfo.Severity = InfoBarSeverity.Error;
+                StartupInfo.Message = exception.Message;
+                StartupInfo.IsOpen = true;
+            });
+
+    private async Task RefreshQueueAsync(Guid? taskToSelect = null)
+    {
+        if (_isRefreshingQueue)
+        {
+            return;
+        }
+
+        _isRefreshingQueue = true;
+        try
+        {
+            var selectedTaskId =
+                taskToSelect ??
+                (QueueList.SelectedItem as QueueTaskViewModel)?.TaskId;
+            var entries = await _queueStore.ListAsync();
+            _queueItems.Clear();
+            foreach (var entry in entries.Take(200))
+            {
+                _queueItems.Add(new QueueTaskViewModel(
+                    entry,
+                    GetProgress(entry)));
+            }
+
+            QueueList.SelectedItem = selectedTaskId is null
+                ? null
+                : _queueItems.FirstOrDefault(
+                    item => item.TaskId == selectedTaskId.Value);
+            if (QueueList.SelectedItem is not QueueTaskViewModel selected)
+            {
+                QueueDetailsBox.Text = string.Empty;
+                UpdateQueueButtons(null);
+            }
+            else
+            {
+                QueueDetailsBox.Text = FormatQueueDetails(selected.Entry);
+                UpdateQueueButtons(selected.Entry);
+            }
+        }
+        catch (Exception exception)
+        {
+            StartupInfo.Title = "无法读取任务队列";
+            StartupInfo.Severity = InfoBarSeverity.Error;
+            StartupInfo.Message = exception.Message;
+            StartupInfo.IsOpen = true;
+        }
+        finally
+        {
+            _isRefreshingQueue = false;
+        }
+    }
+
+    private CopyProgress? GetProgress(QueueTaskEntry entry)
+    {
+        if (_latestProgress.TryGetValue(entry.TaskId, out var progress))
+        {
+            return progress;
+        }
+
+        if (entry.BytesCompleted is null &&
+            entry.TotalBytes is null &&
+            string.IsNullOrWhiteSpace(entry.CurrentMessage))
+        {
+            return null;
+        }
+
+        return new CopyProgress(
+            Math.Min(entry.CompletedSteps + 1, Math.Max(1, entry.Task.Sources.Count)),
+            Math.Max(1, entry.Task.Sources.Count),
+            entry.CurrentMessage ?? StateText(entry.State),
+            BytesCompleted: entry.BytesCompleted,
+            TotalBytes: entry.TotalBytes,
+            BytesPerSecond: entry.BytesPerSecond,
+            EstimatedRemaining: entry.EstimatedRemainingSeconds is { } seconds
+                ? TimeSpan.FromSeconds(Math.Max(0, seconds))
+                : null);
+    }
+
+    private static CopyProgress MergeProgress(
+        CopyProgress? previous,
+        CopyProgress current) =>
+        previous is null
+            ? current
+            : current with
+            {
+                BytesCompleted = current.BytesCompleted ?? previous.BytesCompleted,
+                TotalBytes = current.TotalBytes ?? previous.TotalBytes,
+                BytesPerSecond = current.BytesPerSecond ?? previous.BytesPerSecond,
+                EstimatedRemaining =
+                    current.EstimatedRemaining ?? previous.EstimatedRemaining
+            };
+
+    private void DisplayProgress(CopyProgress progress)
+    {
+        ProgressArea.Visibility = Visibility.Visible;
+        LogExpander.Visibility = Visibility.Visible;
+        StatusText.Text = progress.Message;
+
+        if (progress.TotalBytes is > 0 && progress.BytesCompleted is { } completed)
+        {
+            TaskProgress.IsIndeterminate = false;
+            TaskProgress.Value = Math.Clamp(
+                completed * 100d / progress.TotalBytes.Value,
+                0,
+                100);
+            ProgressDetailsText.Text =
+                $"{FormatBytes(completed)} / {FormatBytes(progress.TotalBytes.Value)}" +
+                FormatPerformance(progress);
+            ProgressDetailsText.Visibility = Visibility.Visible;
+        }
+        else
+        {
+            TaskProgress.IsIndeterminate = true;
+            ProgressDetailsText.Visibility = Visibility.Collapsed;
+        }
+
+        if (!string.IsNullOrWhiteSpace(progress.Message))
+        {
+            AppendLog(progress.Message);
+        }
+    }
+
+    private static string FormatPerformance(CopyProgress progress)
+    {
+        var parts = new List<string>();
+        if (progress.BytesPerSecond is > 0)
+        {
+            parts.Add($"{FormatBytes((long)progress.BytesPerSecond.Value)}/s");
+        }
+
+        if (progress.EstimatedRemaining is { } remaining)
+        {
+            parts.Add($"剩余 {FormatDuration(remaining)}");
+        }
+
+        return parts.Count == 0
+            ? string.Empty
+            : $" · {string.Join(" · ", parts)}";
+    }
+
+    private void UpdateQueueButtons(QueueTaskEntry? entry)
+    {
+        PauseQueueButton.IsEnabled = entry?.State is
+            QueueTaskState.Pending or
+            QueueTaskState.Running or
+            QueueTaskState.Interrupted;
+        ResumeQueueButton.IsEnabled = entry?.State is
+            QueueTaskState.Paused or
+            QueueTaskState.Interrupted;
+        RetryQueueButton.IsEnabled = entry?.State is
+            QueueTaskState.Failed or
+            QueueTaskState.Canceled;
+        CancelQueueButton.IsEnabled = entry?.State is
+            QueueTaskState.Pending or
+            QueueTaskState.Running or
+            QueueTaskState.PauseRequested or
+            QueueTaskState.Paused or
+            QueueTaskState.Interrupted or
+            QueueTaskState.Failed;
+    }
+
+    private static string FormatQueueDetails(QueueTaskEntry entry)
+    {
+        var lines = new List<string>
+        {
+            $"任务：{entry.TaskId:D}",
+            $"来源：{string.Join("；", entry.Task.Sources)}",
+            $"目标：{entry.Task.Destination}",
+            $"状态：{StateText(entry.State)}；尝试次数：{entry.AttemptCount}",
+            $"创建：{entry.EnqueuedAtUtc.ToLocalTime():yyyy-MM-dd HH:mm:ss}"
+        };
+        if (entry.NativeExitCode is { } exitCode)
+        {
+            lines.Add($"Robocopy 退出码：{exitCode}");
+        }
+
+        if (entry.FailureMessages.Count > 0)
+        {
+            lines.Add("失败摘要：");
+            lines.AddRange(entry.FailureMessages.Take(20).Select(message => $"• {message}"));
+        }
+
+        if (!string.IsNullOrWhiteSpace(entry.Error))
+        {
+            lines.Add($"错误：{entry.Error}");
+        }
+
+        if (entry.LogPaths.Count > 0)
+        {
+            lines.Add("日志：");
+            lines.AddRange(entry.LogPaths.Select(path => $"• {path}"));
+        }
+
+        return string.Join(Environment.NewLine, lines);
+    }
+
+    private static string StateText(QueueTaskState state) => state switch
+    {
+        QueueTaskState.Pending => "等待中",
+        QueueTaskState.Running => "执行中",
+        QueueTaskState.PauseRequested => "正在暂停",
+        QueueTaskState.Paused => "已暂停",
+        QueueTaskState.CancelRequested => "正在取消",
+        QueueTaskState.Completed => "已完成",
+        QueueTaskState.CompletedWithDifferences => "完成（有差异）",
+        QueueTaskState.Failed => "失败",
+        QueueTaskState.Canceled => "已取消",
+        QueueTaskState.Interrupted => "意外中断",
+        _ => state.ToString()
+    };
+
+    private static string FormatDuration(TimeSpan duration)
+    {
+        duration = duration < TimeSpan.Zero ? TimeSpan.Zero : duration;
+        if (duration.TotalHours >= 1)
+        {
+            return $"{(int)duration.TotalHours}小时 {duration.Minutes}分钟";
+        }
+
+        return duration.TotalMinutes >= 1
+            ? $"{(int)duration.TotalMinutes}分钟 {duration.Seconds}秒"
+            : $"{Math.Max(0, duration.Seconds)}秒";
+    }
+
+    private sealed class QueueTaskViewModel
+    {
+        public QueueTaskViewModel(
+            QueueTaskEntry entry,
+            CopyProgress? progress)
+        {
+            Entry = entry;
+            Title = $"{OperationText(entry.Task.Operation)} · " +
+                $"{entry.Task.Sources.Count} 个源项目";
+            Route = $"{SourceSummary(entry.Task.Sources)} → {entry.Task.Destination}";
+            StateText = MainWindow.StateText(entry.State);
+            ProgressText = progress is { TotalBytes: > 0, BytesCompleted: { } completed }
+                ? $"{FormatBytes(completed)} / {FormatBytes(progress.TotalBytes.Value)}" +
+                  FormatPerformance(progress)
+                : $"尝试 {entry.AttemptCount} 次 · " +
+                  $"{entry.UpdatedAtUtc.ToLocalTime():MM-dd HH:mm:ss}";
+        }
+
+        public QueueTaskEntry Entry { get; }
+
+        public Guid TaskId => Entry.TaskId;
+
+        public string Title { get; }
+
+        public string Route { get; }
+
+        public string StateText { get; }
+
+        public string ProgressText { get; }
+
+        private static string OperationText(CopyOperation operation) => operation switch
+        {
+            CopyOperation.Copy => "复制",
+            CopyOperation.Move => "移动",
+            CopyOperation.Sync => "同步",
+            _ => operation.ToString()
+        };
+
+        private static string SourceSummary(IReadOnlyList<string> sources)
+        {
+            var first = sources.Count > 0
+                ? sources[0]
+                : "未知来源";
+            return sources.Count <= 1
+                ? first
+                : $"{first} 等 {sources.Count} 项";
         }
     }
 

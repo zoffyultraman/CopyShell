@@ -1,6 +1,7 @@
 using CopyShell.Core.Protocol;
 using CopyShell.Core.Models;
 using CopyShell.Core.Services;
+using CopyShell.Robocopy;
 using Microsoft.UI.Xaml;
 
 namespace CopyShell.App;
@@ -8,6 +9,8 @@ namespace CopyShell.App;
 public partial class App : Application
 {
     private Window? _window;
+    private readonly CancellationTokenSource _applicationCancellation = new();
+    private Task? _processorTask;
 
     public App()
     {
@@ -21,9 +24,20 @@ public partial class App : Application
         string? startupMessage = null;
         var startupMessageIsError = false;
         var journal = new TaskJournalStore();
+        var queueStore = new TaskQueueStore();
+        var processProbe = new PhysicalProcessProbe();
+        var processor = new TaskQueueProcessor(
+            queueStore,
+            new CopyTaskPlanner(new PhysicalFileSystemProbe()),
+            new RobocopyEngine(new RobocopyCommandFactory()),
+            processProbe);
 
         try
         {
+            queueStore
+                .MarkOrphanedRunsInterruptedAsync(processProbe)
+                .GetAwaiter()
+                .GetResult();
             var interruptedCount = journal
                 .MarkOrphanedRunsInterruptedAsync()
                 .GetAwaiter()
@@ -70,10 +84,13 @@ public partial class App : Application
         _window = new MainWindow(
             request,
             recovery,
-            journal,
+            queueStore,
+            processor,
             startupMessage,
             startupMessageIsError);
+        _window.Closed += (_, _) => _applicationCancellation.Cancel();
         _window.Activate();
+        _processorTask = processor.RunAsync(_applicationCancellation.Token);
     }
 
     private static string? FindRequestPath(IReadOnlyList<string> arguments)

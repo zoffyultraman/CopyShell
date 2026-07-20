@@ -4,4 +4,7 @@ public sealed record CopyExecutionResult(
     CopyExecutionOutcome Outcome,
     int NativeExitCode,
     int CompletedSteps,
-    IReadOnlyList<string> LogPaths);
+    IReadOnlyList<string> LogPaths)
+{
+    public IReadOnlyList<CopyFailure> Failures { get; init; } = [];
+}
