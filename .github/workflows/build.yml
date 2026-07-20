@@ -325,6 +325,45 @@ jobs:
             }
           }
 
+      - name: Smoke test current-user installer
+        if: steps.solution.outputs.exists == 'true'
+        shell: powershell
+        run: |
+          $ErrorActionPreference = "Stop"
+          $publishDirectory = Join-Path `
+            $env:GITHUB_WORKSPACE `
+            "artifacts\publish\$env:RUNTIME_IDENTIFIER"
+          $installScript = Join-Path $publishDirectory "install.ps1"
+          $uninstallScript = Join-Path $publishDirectory "uninstall.ps1"
+          $classKey = "Registry::HKEY_CURRENT_USER\Software\Classes\CLSID\{6D5FE7D6-4A85-4ED1-AF8A-4E6F338C3D71}\InprocServer32"
+          $installRoot = Join-Path $env:LOCALAPPDATA "Programs\CopyShell"
+
+          try {
+            & $installScript -SourceDirectory $publishDirectory
+
+            if (-not (Test-Path -LiteralPath $classKey)) {
+              throw "The installer did not register the Shell Extension."
+            }
+
+            $registeredPath = (Get-Item -LiteralPath $classKey).GetValue("")
+            if (-not $registeredPath.StartsWith(
+              $installRoot,
+              [StringComparison]::OrdinalIgnoreCase
+            )) {
+              throw "The installer registered an unexpected path: $registeredPath"
+            }
+            if (-not (Test-Path -LiteralPath $registeredPath)) {
+              throw "The registered Shell Extension does not exist: $registeredPath"
+            }
+          }
+          finally {
+            & $uninstallScript
+          }
+
+          if (Test-Path -LiteralPath $classKey) {
+            throw "The uninstaller did not remove the Shell Extension registration."
+          }
+
       - name: Build unsigned MSIX for validation
         if: steps.solution.outputs.exists == 'true'
         shell: pwsh
