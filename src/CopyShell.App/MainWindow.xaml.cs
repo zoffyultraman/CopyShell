@@ -5,6 +5,7 @@ using CopyShell.Core.Protocol;
 using CopyShell.Core.Services;
 using Microsoft.UI;
 using Microsoft.UI.Dispatching;
+using Microsoft.UI.Text;
 using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
@@ -17,6 +18,32 @@ namespace CopyShell.App;
 public sealed partial class MainWindow : Window
 {
     private const int MaximumLogCharacters = 250_000;
+
+    private TextBlock OperationTitle = null!;
+    private TextBlock OperationDescription = null!;
+    private InfoBar StartupInfo = null!;
+    private InfoBar SyncWarning = null!;
+    private ListView SourceList = null!;
+    private TextBox DestinationBox = null!;
+    private ComboBox ConflictStrategyBox = null!;
+    private NumberBox ThreadCountBox = null!;
+    private NumberBox RetryCountBox = null!;
+    private CheckBox RestartableCheckBox = null!;
+    private CheckBox ExcludeJunctionsCheckBox = null!;
+    private StackPanel ProgressArea = null!;
+    private ProgressBar TaskProgress = null!;
+    private TextBlock StatusText = null!;
+    private TextBlock ProgressDetailsText = null!;
+    private Expander LogExpander = null!;
+    private TextBox LogBox = null!;
+    private ListView QueueList = null!;
+    private Button PauseQueueButton = null!;
+    private Button ResumeQueueButton = null!;
+    private Button RetryQueueButton = null!;
+    private Button CancelQueueButton = null!;
+    private TextBox QueueDetailsBox = null!;
+    private Button CancelButton = null!;
+    private Button StartButton = null!;
 
     private readonly bool _hasTaskContext;
     private readonly CopyOperation _operation;
@@ -44,6 +71,7 @@ public sealed partial class MainWindow : Window
         AppDiagnostics.Write("MainWindow.InitializeComponent started.");
         InitializeComponent();
         AppDiagnostics.Write("MainWindow.InitializeComponent completed.");
+        BuildInterface();
         DestinationBox.TextChanged += OnDestinationChanged;
         QueueList.SelectionChanged += OnQueueSelectionChanged;
         _queueStore = queueStore;
@@ -84,6 +112,259 @@ public sealed partial class MainWindow : Window
 
         UpdateStartButton();
         _ = RefreshQueueAsync();
+    }
+
+    private void BuildInterface()
+    {
+        AppDiagnostics.Write("Building main window controls.");
+
+        RootGrid.RowDefinitions.Add(new RowDefinition
+        {
+            Height = new GridLength(1, GridUnitType.Star)
+        });
+        RootGrid.RowDefinitions.Add(new RowDefinition
+        {
+            Height = GridLength.Auto
+        });
+
+        var content = new StackPanel
+        {
+            Padding = new Thickness(28),
+            Spacing = 14
+        };
+        var scrollViewer = new ScrollViewer
+        {
+            Content = content
+        };
+        Grid.SetRow(scrollViewer, 0);
+        RootGrid.Children.Add(scrollViewer);
+
+        OperationTitle = new TextBlock
+        {
+            FontSize = 28,
+            FontWeight = FontWeights.SemiBold,
+            Text = "高级复制到…"
+        };
+        OperationDescription = new TextBlock
+        {
+            Text = "使用 Robocopy 可靠地处理所选项目。"
+        };
+        content.Children.Add(OperationTitle);
+        content.Children.Add(OperationDescription);
+
+        AppDiagnostics.Write("Building status controls.");
+        StartupInfo = new InfoBar
+        {
+            IsClosable = false,
+            IsOpen = false
+        };
+        SyncWarning = new InfoBar
+        {
+            IsClosable = false,
+            IsOpen = false
+        };
+        content.Children.Add(StartupInfo);
+        content.Children.Add(SyncWarning);
+
+        content.Children.Add(new TextBlock
+        {
+            FontWeight = FontWeights.SemiBold,
+            Text = "源项目"
+        });
+        SourceList = new ListView
+        {
+            MinHeight = 100,
+            SelectionMode = ListViewSelectionMode.None
+        };
+        content.Children.Add(SourceList);
+
+        content.Children.Add(new TextBlock
+        {
+            FontWeight = FontWeights.SemiBold,
+            Text = "目标文件夹"
+        });
+        DestinationBox = new TextBox
+        {
+            PlaceholderText = "选择目标文件夹"
+        };
+        content.Children.Add(DestinationBox);
+        var browseButton = new Button
+        {
+            Content = "浏览…"
+        };
+        browseButton.Click += OnBrowseClicked;
+        content.Children.Add(browseButton);
+
+        AppDiagnostics.Write("Building copy option controls.");
+        content.Children.Add(new TextBlock
+        {
+            FontWeight = FontWeights.SemiBold,
+            Text = "高级选项"
+        });
+        ConflictStrategyBox = new ComboBox
+        {
+            Header = "文件冲突处理"
+        };
+        ConflictStrategyBox.Items.Add(new ComboBoxItem
+        {
+            Content = "覆盖不同的目标文件"
+        });
+        ConflictStrategyBox.Items.Add(new ComboBoxItem
+        {
+            Content = "跳过所有已存在文件"
+        });
+        ConflictStrategyBox.Items.Add(new ComboBoxItem
+        {
+            Content = "仅复制较新的文件"
+        });
+        ConflictStrategyBox.SelectedIndex = 0;
+        content.Children.Add(ConflictStrategyBox);
+
+        ThreadCountBox = new NumberBox
+        {
+            Header = "并行线程数",
+            Maximum = 128,
+            Minimum = 1,
+            Value = 16
+        };
+        RetryCountBox = new NumberBox
+        {
+            Header = "失败重试次数",
+            Maximum = 100,
+            Minimum = 0,
+            Value = 2
+        };
+        RestartableCheckBox = new CheckBox
+        {
+            Content = "断点续传（/Z）",
+            IsChecked = true
+        };
+        ExcludeJunctionsCheckBox = new CheckBox
+        {
+            Content = "跳过目录联接（/XJ）",
+            IsChecked = true
+        };
+        content.Children.Add(ThreadCountBox);
+        content.Children.Add(RetryCountBox);
+        content.Children.Add(RestartableCheckBox);
+        content.Children.Add(ExcludeJunctionsCheckBox);
+
+        AppDiagnostics.Write("Building progress and log controls.");
+        ProgressArea = new StackPanel
+        {
+            Spacing = 8,
+            Visibility = Visibility.Collapsed
+        };
+        TaskProgress = new ProgressBar
+        {
+            IsIndeterminate = true
+        };
+        StatusText = new TextBlock
+        {
+            Text = "准备中…"
+        };
+        ProgressDetailsText = new TextBlock
+        {
+            Visibility = Visibility.Collapsed
+        };
+        ProgressArea.Children.Add(TaskProgress);
+        ProgressArea.Children.Add(StatusText);
+        ProgressArea.Children.Add(ProgressDetailsText);
+        content.Children.Add(ProgressArea);
+
+        LogBox = new TextBox
+        {
+            AcceptsReturn = true,
+            IsReadOnly = true
+        };
+        LogExpander = new Expander
+        {
+            Header = "执行日志",
+            Content = LogBox,
+            Visibility = Visibility.Collapsed
+        };
+        content.Children.Add(LogExpander);
+
+        AppDiagnostics.Write("Building queue controls.");
+        content.Children.Add(new TextBlock
+        {
+            FontWeight = FontWeights.SemiBold,
+            Text = "任务队列与历史"
+        });
+        var refreshButton = new Button
+        {
+            Content = "刷新"
+        };
+        refreshButton.Click += OnRefreshQueueClicked;
+        content.Children.Add(refreshButton);
+
+        QueueList = new ListView
+        {
+            MinHeight = 140,
+            SelectionMode = ListViewSelectionMode.Single
+        };
+        content.Children.Add(QueueList);
+
+        var queueButtons = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            Spacing = 8
+        };
+        PauseQueueButton = CreateQueueButton("暂停", OnPauseQueueClicked);
+        ResumeQueueButton = CreateQueueButton("恢复", OnResumeQueueClicked);
+        RetryQueueButton = CreateQueueButton("重试任务", OnRetryQueueClicked);
+        CancelQueueButton = CreateQueueButton("取消任务", OnCancelQueueClicked);
+        queueButtons.Children.Add(PauseQueueButton);
+        queueButtons.Children.Add(ResumeQueueButton);
+        queueButtons.Children.Add(RetryQueueButton);
+        queueButtons.Children.Add(CancelQueueButton);
+        content.Children.Add(queueButtons);
+
+        QueueDetailsBox = new TextBox
+        {
+            AcceptsReturn = true,
+            IsReadOnly = true,
+            TextWrapping = TextWrapping.Wrap
+        };
+        content.Children.Add(QueueDetailsBox);
+
+        var footer = new Grid
+        {
+            Margin = new Thickness(28, 12, 28, 12)
+        };
+        CancelButton = new Button
+        {
+            Content = "取消",
+            HorizontalAlignment = HorizontalAlignment.Left,
+            IsEnabled = false
+        };
+        CancelButton.Click += OnCancelClicked;
+        StartButton = new Button
+        {
+            Content = "开始复制",
+            HorizontalAlignment = HorizontalAlignment.Right,
+            IsEnabled = false
+        };
+        StartButton.Click += OnStartClicked;
+        footer.Children.Add(CancelButton);
+        footer.Children.Add(StartButton);
+        Grid.SetRow(footer, 1);
+        RootGrid.Children.Add(footer);
+
+        AppDiagnostics.Write("Main window controls built.");
+    }
+
+    private static Button CreateQueueButton(
+        string label,
+        RoutedEventHandler clickHandler)
+    {
+        var button = new Button
+        {
+            Content = label,
+            IsEnabled = false
+        };
+        button.Click += clickHandler;
+        return button;
     }
 
     private void ConfigureWindow()
@@ -765,6 +1046,11 @@ public sealed partial class MainWindow : Window
         public string StateText { get; }
 
         public string ProgressText { get; }
+
+        public override string ToString() =>
+            $"{Title}{Environment.NewLine}" +
+            $"{Route}{Environment.NewLine}" +
+            $"{StateText} · {ProgressText}";
 
         private static string OperationText(CopyOperation operation) => operation switch
         {
