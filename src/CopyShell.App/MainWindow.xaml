@@ -4,9 +4,7 @@
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
 
-    <Grid
-        x:Name="RootGrid"
-        Background="{ThemeResource ApplicationPageBackgroundThemeBrush}">
+    <Grid x:Name="RootGrid">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
             <RowDefinition Height="*" />
@@ -21,7 +19,6 @@
                 Text="高级复制到…" />
             <TextBlock
                 x:Name="OperationDescription"
-                Foreground="{ThemeResource TextFillColorSecondaryBrush}"
                 Text="使用 Robocopy 可靠地处理所选项目。" />
         </StackPanel>
 
@@ -46,7 +43,6 @@
                     <TextBlock FontSize="16" FontWeight="SemiBold" Text="源项目" />
                     <Border
                         MinHeight="110"
-                        BorderBrush="{ThemeResource DividerStrokeColorDefaultBrush}"
                         BorderThickness="1"
                         CornerRadius="6">
                         <ListView
@@ -142,11 +138,9 @@
                     <ProgressBar x:Name="TaskProgress" IsIndeterminate="True" />
                     <TextBlock
                         x:Name="StatusText"
-                        Foreground="{ThemeResource TextFillColorSecondaryBrush}"
                         Text="准备中…" />
                     <TextBlock
                         x:Name="ProgressDetailsText"
-                        Foreground="{ThemeResource TextFillColorSecondaryBrush}"
                         Text=""
                         Visibility="Collapsed" />
                 </StackPanel>
@@ -197,11 +191,9 @@
                                             Text="{Binding Title}" />
                                         <TextBlock
                                             MaxWidth="510"
-                                            Foreground="{ThemeResource TextFillColorSecondaryBrush}"
                                             Text="{Binding Route}"
                                             TextTrimming="CharacterEllipsis" />
                                         <TextBlock
-                                            Foreground="{ThemeResource TextFillColorSecondaryBrush}"
                                             Text="{Binding ProgressText}" />
                                     </StackPanel>
                                     <TextBlock
@@ -260,8 +252,7 @@
                 HorizontalAlignment="Right"
                 Click="OnStartClicked"
                 Content="开始复制"
-                IsEnabled="False"
-                Style="{StaticResource AccentButtonStyle}" />
+                IsEnabled="False" />
         </Grid>
     </Grid>
 </Window>
