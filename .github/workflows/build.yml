@@ -148,9 +148,42 @@ jobs:
             throw "Expected application project was not found: $appProject"
           }
 
-          $publishDirectory = Join-Path `
+          $publishRoot = Join-Path `
             $env:GITHUB_WORKSPACE `
-            "artifacts\publish\$env:RUNTIME_IDENTIFIER\"
+            "artifacts\publish\$env:RUNTIME_IDENTIFIER"
+          $fullDirectory = Join-Path $publishRoot "full"
+          $liteDirectory = Join-Path $publishRoot "lite"
+          Remove-Item `
+            -LiteralPath $publishRoot `
+            -Recurse `
+            -Force `
+            -ErrorAction SilentlyContinue
+
+          msbuild $appProject `
+            /m `
+            /t:Publish `
+            /p:Configuration=$env:CONFIGURATION `
+            /p:Platform=$env:PLATFORM `
+            /p:RuntimeIdentifier=$env:RUNTIME_IDENTIFIER `
+            /p:SelfContained=false `
+            /p:WindowsAppSDKSelfContained=false `
+            /p:PublishTrimmed=false `
+            /p:PublishReadyToRun=false `
+            /p:PublishSingleFile=false `
+            "/p:PublishDir=$liteDirectory\"
+          if ($LASTEXITCODE -ne 0) {
+            exit $LASTEXITCODE
+          }
+
+          dotnet publish "src\CopyShell.Worker\CopyShell.Worker.csproj" `
+            --configuration $env:CONFIGURATION `
+            --runtime $env:RUNTIME_IDENTIFIER `
+            --self-contained false `
+            --output $liteDirectory
+          if ($LASTEXITCODE -ne 0) {
+            exit $LASTEXITCODE
+          }
+
           msbuild $appProject `
             /m `
             /t:Publish `
@@ -158,7 +191,11 @@ jobs:
             /p:Platform=$env:PLATFORM `
             /p:RuntimeIdentifier=$env:RUNTIME_IDENTIFIER `
             /p:SelfContained=true `
-            "/p:PublishDir=$publishDirectory"
+            /p:WindowsAppSDKSelfContained=true `
+            /p:PublishTrimmed=false `
+            /p:PublishReadyToRun=false `
+            /p:PublishSingleFile=false `
+            "/p:PublishDir=$fullDirectory\"
           if ($LASTEXITCODE -ne 0) {
             exit $LASTEXITCODE
           }
@@ -167,7 +204,7 @@ jobs:
             --configuration $env:CONFIGURATION `
             --runtime $env:RUNTIME_IDENTIFIER `
             --self-contained true `
-            --output $publishDirectory
+            --output $fullDirectory
           if ($LASTEXITCODE -ne 0) {
             exit $LASTEXITCODE
           }
@@ -195,7 +232,7 @@ jobs:
             exit $LASTEXITCODE
           }
 
-          $publishDirectory = Join-Path `
+          $publishRoot = Join-Path `
             $env:GITHUB_WORKSPACE `
             "artifacts\publish\$env:RUNTIME_IDENTIFIER"
           $extension = Join-Path $shellOutput "CopyShell.ShellExtension.dll"
@@ -203,36 +240,122 @@ jobs:
             throw "Shell Extension output was not found: $extension"
           }
 
-          Copy-Item -LiteralPath $extension -Destination $publishDirectory -Force
-          Copy-Item `
-            -Path "installer\CopyShell.Installer\*.ps1" `
-            -Destination $publishDirectory `
-            -Force
-          Copy-Item -LiteralPath "LICENSE" -Destination $publishDirectory -Force
-          Copy-Item -LiteralPath "README.md" -Destination $publishDirectory -Force
+          foreach ($flavor in @("full", "lite")) {
+            $publishDirectory = Join-Path $publishRoot $flavor
+            Copy-Item `
+              -LiteralPath $extension `
+              -Destination $publishDirectory `
+              -Force
+            Copy-Item `
+              -Path "installer\CopyShell.Installer\*.ps1" `
+              -Destination $publishDirectory `
+              -Force
+            Copy-Item `
+              -LiteralPath "LICENSE" `
+              -Destination $publishDirectory `
+              -Force
+            Copy-Item `
+              -LiteralPath "README.md" `
+              -Destination $publishDirectory `
+              -Force
+          }
+
+          @"
+          CopyShell runtime-dependent package
+
+          Required on the destination computer:
+          - .NET 8 Runtime (x64)
+          - Windows App Runtime 1.8 (x64)
+          "@ | Set-Content `
+            -LiteralPath (Join-Path $publishRoot "lite\RUNTIME-REQUIREMENTS.txt") `
+            -Encoding utf8
+
+      - name: Validate package flavors
+        if: steps.solution.outputs.exists == 'true'
+        shell: pwsh
+        run: |
+          $publishRoot = Join-Path `
+            $env:GITHUB_WORKSPACE `
+            "artifacts\publish\$env:RUNTIME_IDENTIFIER"
+          $fullDirectory = Join-Path $publishRoot "full"
+          $liteDirectory = Join-Path $publishRoot "lite"
+          $requiredFiles = @(
+            "CopyShell.App.exe",
+            "CopyShell.Worker.exe",
+            "CopyShell.ShellExtension.dll",
+            "install.ps1",
+            "uninstall.ps1"
+          )
+
+          foreach ($directory in @($fullDirectory, $liteDirectory)) {
+            foreach ($file in $requiredFiles) {
+              $path = Join-Path $directory $file
+              if (-not (Test-Path -LiteralPath $path)) {
+                throw "Package file is missing: $path"
+              }
+            }
+          }
+
+          foreach ($runtimeFile in @(
+            "coreclr.dll",
+            "clrjit.dll",
+            "hostfxr.dll",
+            "Microsoft.UI.Xaml.dll"
+          )) {
+            if (-not (Test-Path -LiteralPath (
+              Join-Path $fullDirectory $runtimeFile
+            ))) {
+              throw "Full package runtime file is missing: $runtimeFile"
+            }
+            if (Test-Path -LiteralPath (
+              Join-Path $liteDirectory $runtimeFile
+            )) {
+              throw "Lite package unexpectedly contains: $runtimeFile"
+            }
+          }
+
+          $fullSize = (
+            Get-ChildItem -LiteralPath $fullDirectory -File -Recurse |
+              Measure-Object -Property Length -Sum
+          ).Sum
+          $liteSize = (
+            Get-ChildItem -LiteralPath $liteDirectory -File -Recurse |
+              Measure-Object -Property Length -Sum
+          ).Sum
+          if ($liteSize -ge $fullSize) {
+            throw "Lite package is not smaller than the full package."
+          }
+          Write-Host "Full package size: $fullSize bytes."
+          Write-Host "Lite package size: $liteSize bytes."
 
       - name: Smoke test background Worker
         if: steps.solution.outputs.exists == 'true'
         shell: pwsh
         run: |
-          $worker = Join-Path `
+          $publishRoot = Join-Path `
             $env:GITHUB_WORKSPACE `
-            "artifacts\publish\$env:RUNTIME_IDENTIFIER\CopyShell.Worker.exe"
-          if (-not (Test-Path -LiteralPath $worker)) {
-            throw "Background Worker output was not found: $worker"
-          }
+            "artifacts\publish\$env:RUNTIME_IDENTIFIER"
+          foreach ($flavor in @("full", "lite")) {
+            $worker = Join-Path `
+              $publishRoot `
+              "$flavor\CopyShell.Worker.exe"
+            if (-not (Test-Path -LiteralPath $worker)) {
+              throw "Background Worker output was not found: $worker"
+            }
 
-          $process = Start-Process `
-            -FilePath $worker `
-            -ArgumentList "--health-check" `
-            -Wait `
-            -PassThru `
-            -NoNewWindow
-          $exitCode = $process.ExitCode
-          $process.Dispose()
-          if ($exitCode -ne 0) {
-            Write-Output "::error title=Background Worker health check::Exit code $exitCode"
-            throw "Background Worker health check failed: $exitCode"
+            $process = Start-Process `
+              -FilePath $worker `
+              -ArgumentList "--health-check" `
+              -Wait `
+              -PassThru `
+              -NoNewWindow
+            $exitCode = $process.ExitCode
+            $process.Dispose()
+            if ($exitCode -ne 0) {
+              Write-Output `
+                "::error title=Background Worker health check ($flavor)::Exit code $exitCode"
+              throw "Background Worker health check failed ($flavor): $exitCode"
+            }
           }
 
       - name: Smoke test application startup
@@ -241,7 +364,7 @@ jobs:
         run: |
           $application = Join-Path `
             $env:GITHUB_WORKSPACE `
-            "artifacts\publish\$env:RUNTIME_IDENTIFIER\CopyShell.App.exe"
+            "artifacts\publish\$env:RUNTIME_IDENTIFIER\full\CopyShell.App.exe"
           if (-not (Test-Path -LiteralPath $application)) {
             throw "Application output was not found: $application"
           }
@@ -361,7 +484,7 @@ jobs:
         run: |
           $extension = Join-Path `
             $env:GITHUB_WORKSPACE `
-            "artifacts\publish\$env:RUNTIME_IDENTIFIER\CopyShell.ShellExtension.dll"
+            "artifacts\publish\$env:RUNTIME_IDENTIFIER\full\CopyShell.ShellExtension.dll"
 
           function Stop-SmokeTest([string]$Message) {
             Write-Output "::error title=Shell Extension smoke test::$Message"
@@ -458,7 +581,7 @@ jobs:
           $ErrorActionPreference = "Stop"
           $publishDirectory = Join-Path `
             $env:GITHUB_WORKSPACE `
-            "artifacts\publish\$env:RUNTIME_IDENTIFIER"
+            "artifacts\publish\$env:RUNTIME_IDENTIFIER\full"
           $installScript = Join-Path $publishDirectory "install.ps1"
           $uninstallScript = Join-Path $publishDirectory "uninstall.ps1"
           $classKey = "Registry::HKEY_CURRENT_USER\Software\Classes\CLSID\{6D5FE7D6-4A85-4ED1-AF8A-4E6F338C3D71}\InprocServer32"
@@ -497,8 +620,8 @@ jobs:
           try {
             $revision = [int]("${{ github.run_number }}") % 65535
             & "installer\CopyShell.Identity\New-CopyShellPackage.ps1" `
-              -PublishDirectory "artifacts\publish\$env:RUNTIME_IDENTIFIER" `
-              -ShellExtension "artifacts\publish\$env:RUNTIME_IDENTIFIER\CopyShell.ShellExtension.dll" `
+              -PublishDirectory "artifacts\publish\$env:RUNTIME_IDENTIFIER\full" `
+              -ShellExtension "artifacts\publish\$env:RUNTIME_IDENTIFIER\full\CopyShell.ShellExtension.dll" `
               -OutputDirectory "artifacts\package" `
               -Version "0.2.0.$revision" `
               -Publisher "CN=CopyShell Development"
@@ -509,13 +632,22 @@ jobs:
             throw
           }
 
-      - name: Upload build artifacts
+      - name: Upload full build artifact
         if: steps.solution.outputs.exists == 'true'
         uses: actions/upload-artifact@v7
         with:
-          name: CopyShell-${{ env.RUNTIME_IDENTIFIER }}
+          name: CopyShell-${{ env.RUNTIME_IDENTIFIER }}-full
           path: |
-            artifacts/publish/${{ env.RUNTIME_IDENTIFIER }}/
+            artifacts/publish/${{ env.RUNTIME_IDENTIFIER }}/full/
             artifacts/package/CopyShell-x64.msix
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload lite build artifact
+        if: steps.solution.outputs.exists == 'true'
+        uses: actions/upload-artifact@v7
+        with:
+          name: CopyShell-${{ env.RUNTIME_IDENTIFIER }}-lite
+          path: artifacts/publish/${{ env.RUNTIME_IDENTIFIER }}/lite/
           if-no-files-found: error
           retention-days: 14

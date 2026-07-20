@@ -119,10 +119,41 @@ jobs:
       - name: Publish application and Shell Extension
         shell: pwsh
         run: |
-          $publish = "artifacts\publish\$env:RUNTIME_IDENTIFIER"
-          $publishDirectory = Join-Path `
+          $publishRoot = Join-Path `
             $env:GITHUB_WORKSPACE `
-            "$publish\"
+            "artifacts\publish\$env:RUNTIME_IDENTIFIER"
+          $fullDirectory = Join-Path $publishRoot "full"
+          $liteDirectory = Join-Path $publishRoot "lite"
+          Remove-Item `
+            -LiteralPath $publishRoot `
+            -Recurse `
+            -Force `
+            -ErrorAction SilentlyContinue
+
+          msbuild "src\CopyShell.App\CopyShell.App.csproj" `
+            /m `
+            /t:Publish `
+            /p:Configuration=$env:CONFIGURATION `
+            /p:Platform=$env:PLATFORM `
+            /p:RuntimeIdentifier=$env:RUNTIME_IDENTIFIER `
+            /p:SelfContained=false `
+            /p:WindowsAppSDKSelfContained=false `
+            /p:PublishTrimmed=false `
+            /p:PublishReadyToRun=false `
+            /p:PublishSingleFile=false `
+            "/p:PublishDir=$liteDirectory\"
+          if ($LASTEXITCODE -ne 0) {
+            exit $LASTEXITCODE
+          }
+          dotnet publish "src\CopyShell.Worker\CopyShell.Worker.csproj" `
+            --configuration $env:CONFIGURATION `
+            --runtime $env:RUNTIME_IDENTIFIER `
+            --self-contained false `
+            --output $liteDirectory
+          if ($LASTEXITCODE -ne 0) {
+            exit $LASTEXITCODE
+          }
+
           msbuild "src\CopyShell.App\CopyShell.App.csproj" `
             /m `
             /t:Publish `
@@ -130,7 +161,11 @@ jobs:
             /p:Platform=$env:PLATFORM `
             /p:RuntimeIdentifier=$env:RUNTIME_IDENTIFIER `
             /p:SelfContained=true `
-            "/p:PublishDir=$publishDirectory"
+            /p:WindowsAppSDKSelfContained=true `
+            /p:PublishTrimmed=false `
+            /p:PublishReadyToRun=false `
+            /p:PublishSingleFile=false `
+            "/p:PublishDir=$fullDirectory\"
           if ($LASTEXITCODE -ne 0) {
             exit $LASTEXITCODE
           }
@@ -138,7 +173,7 @@ jobs:
             --configuration $env:CONFIGURATION `
             --runtime $env:RUNTIME_IDENTIFIER `
             --self-contained true `
-            --output $publishDirectory
+            --output $fullDirectory
           if ($LASTEXITCODE -ne 0) {
             exit $LASTEXITCODE
           }
@@ -156,16 +191,35 @@ jobs:
             exit $LASTEXITCODE
           }
 
-          Copy-Item `
-            -LiteralPath (Join-Path $shellOutput "CopyShell.ShellExtension.dll") `
-            -Destination $publish `
-            -Force
-          Copy-Item `
-            -Path "installer\CopyShell.Installer\*.ps1" `
-            -Destination $publish `
-            -Force
-          Copy-Item -LiteralPath "LICENSE" -Destination $publish -Force
-          Copy-Item -LiteralPath "README.md" -Destination $publish -Force
+          foreach ($flavor in @("full", "lite")) {
+            $publishDirectory = Join-Path $publishRoot $flavor
+            Copy-Item `
+              -LiteralPath (Join-Path $shellOutput "CopyShell.ShellExtension.dll") `
+              -Destination $publishDirectory `
+              -Force
+            Copy-Item `
+              -Path "installer\CopyShell.Installer\*.ps1" `
+              -Destination $publishDirectory `
+              -Force
+            Copy-Item `
+              -LiteralPath "LICENSE" `
+              -Destination $publishDirectory `
+              -Force
+            Copy-Item `
+              -LiteralPath "README.md" `
+              -Destination $publishDirectory `
+              -Force
+          }
+
+          @"
+          CopyShell runtime-dependent package
+
+          Required on the destination computer:
+          - .NET 8 Runtime (x64)
+          - Windows App Runtime 1.8 (x64)
+          "@ | Set-Content `
+            -LiteralPath (Join-Path $liteDirectory "RUNTIME-REQUIREMENTS.txt") `
+            -Encoding utf8
 
       - name: Sign CopyShell binaries
         shell: pwsh
@@ -173,12 +227,17 @@ jobs:
           CERTIFICATE: ${{ secrets.COPYSHELL_SIGNING_CERT_BASE64 }}
           CERTIFICATE_PASSWORD: ${{ secrets.COPYSHELL_SIGNING_CERT_PASSWORD }}
         run: |
-          $publish = "artifacts\publish\$env:RUNTIME_IDENTIFIER"
+          $publishRoot = "artifacts\publish\$env:RUNTIME_IDENTIFIER"
+          $fullDirectory = Join-Path $publishRoot "full"
+          $liteDirectory = Join-Path $publishRoot "lite"
           & "installer\CopyShell.Identity\Sign-CopyShellArtifacts.ps1" `
             -Files @(
-              (Join-Path $publish "CopyShell.App.exe"),
-              (Join-Path $publish "CopyShell.Worker.exe"),
-              (Join-Path $publish "CopyShell.ShellExtension.dll")
+              (Join-Path $fullDirectory "CopyShell.App.exe"),
+              (Join-Path $fullDirectory "CopyShell.Worker.exe"),
+              (Join-Path $fullDirectory "CopyShell.ShellExtension.dll"),
+              (Join-Path $liteDirectory "CopyShell.App.exe"),
+              (Join-Path $liteDirectory "CopyShell.Worker.exe"),
+              (Join-Path $liteDirectory "CopyShell.ShellExtension.dll")
             ) `
             -SigningCertificateBase64 $env:CERTIFICATE `
             -SigningCertificatePassword $env:CERTIFICATE_PASSWORD
@@ -192,8 +251,8 @@ jobs:
         run: |
           $baseUri = "https://github.com/${{ github.repository }}/releases/latest/download"
           & "installer\CopyShell.Identity\New-CopyShellPackage.ps1" `
-            -PublishDirectory "artifacts\publish\$env:RUNTIME_IDENTIFIER" `
-            -ShellExtension "artifacts\publish\$env:RUNTIME_IDENTIFIER\CopyShell.ShellExtension.dll" `
+            -PublishDirectory "artifacts\publish\$env:RUNTIME_IDENTIFIER\full" `
+            -ShellExtension "artifacts\publish\$env:RUNTIME_IDENTIFIER\full\CopyShell.ShellExtension.dll" `
             -OutputDirectory "artifacts\release" `
             -Version "${{ steps.version.outputs.package_version }}" `
             -Publisher $env:CERTIFICATE_PUBLISHER `
@@ -202,18 +261,23 @@ jobs:
             -AppInstallerUri "$baseUri/CopyShell.appinstaller" `
             -PackageUri "$baseUri/CopyShell-x64.msix"
 
-      - name: Build Portable package and checksums
+      - name: Build Portable packages and checksums
         shell: pwsh
         run: |
           $release = "artifacts\release"
           Compress-Archive `
-            -Path "artifacts\publish\$env:RUNTIME_IDENTIFIER\*" `
-            -DestinationPath (Join-Path $release "CopyShell-portable-x64.zip") `
+            -Path "artifacts\publish\$env:RUNTIME_IDENTIFIER\full\*" `
+            -DestinationPath (Join-Path $release "CopyShell-full-x64.zip") `
+            -CompressionLevel Optimal
+          Compress-Archive `
+            -Path "artifacts\publish\$env:RUNTIME_IDENTIFIER\lite\*" `
+            -DestinationPath (Join-Path $release "CopyShell-lite-x64.zip") `
             -CompressionLevel Optimal
           $files = @(
             (Join-Path $release "CopyShell-x64.msix"),
             (Join-Path $release "CopyShell.appinstaller"),
-            (Join-Path $release "CopyShell-portable-x64.zip")
+            (Join-Path $release "CopyShell-full-x64.zip"),
+            (Join-Path $release "CopyShell-lite-x64.zip")
           )
           $lines = foreach ($file in $files) {
             $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $file).Hash.ToLowerInvariant()
@@ -231,7 +295,8 @@ jobs:
           gh release create "${{ github.ref_name }}" `
             "artifacts\release\CopyShell-x64.msix" `
             "artifacts\release\CopyShell.appinstaller" `
-            "artifacts\release\CopyShell-portable-x64.zip" `
+            "artifacts\release\CopyShell-full-x64.zip" `
+            "artifacts\release\CopyShell-lite-x64.zip" `
             "artifacts\release\SHA256SUMS.txt" `
             --verify-tag `
             --generate-notes `
