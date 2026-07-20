@@ -180,6 +180,29 @@ jobs:
             $env:GITHUB_WORKSPACE `
             "artifacts\publish\$env:RUNTIME_IDENTIFIER\CopyShell.ShellExtension.dll"
 
+          function Stop-SmokeTest([string]$Message) {
+            Write-Output "::error title=Shell Extension smoke test::$Message"
+            throw $Message
+          }
+
+          function Invoke-RegSvr32([bool]$Unregister) {
+            $regsvr32 = Join-Path $env:SystemRoot "System32\regsvr32.exe"
+            $startInfo = [System.Diagnostics.ProcessStartInfo]::new()
+            $startInfo.FileName = $regsvr32
+            $startInfo.UseShellExecute = $false
+            $startInfo.ArgumentList.Add("/s")
+            if ($Unregister) {
+              $startInfo.ArgumentList.Add("/u")
+            }
+            $startInfo.ArgumentList.Add($extension)
+
+            $process = [System.Diagnostics.Process]::Start($startInfo)
+            $process.WaitForExit()
+            $exitCode = $process.ExitCode
+            $process.Dispose()
+            return $exitCode
+          }
+
           Add-Type @"
           using System;
           using System.Runtime.InteropServices;
@@ -199,7 +222,8 @@ jobs:
 
           $module = [CopyShellNativeTest]::LoadLibrary($extension)
           if ($module -eq [IntPtr]::Zero) {
-            throw "Shell Extension could not be loaded."
+            $errorCode = [Runtime.InteropServices.Marshal]::GetLastWin32Error()
+            Stop-SmokeTest "Shell Extension could not be loaded. Win32 error: $errorCode"
           }
 
           try {
@@ -211,7 +235,7 @@ jobs:
             )
             foreach ($name in $exports) {
               if ([CopyShellNativeTest]::GetProcAddress($module, $name) -eq [IntPtr]::Zero) {
-                throw "Missing Shell Extension export: $name"
+                Stop-SmokeTest "Missing Shell Extension export: $name"
               }
             }
           }
@@ -219,10 +243,9 @@ jobs:
             [CopyShellNativeTest]::FreeLibrary($module) | Out-Null
           }
 
-          $regsvr32 = Join-Path $env:SystemRoot "System32\regsvr32.exe"
-          & $regsvr32 /s $extension
-          if ($LASTEXITCODE -ne 0) {
-            throw "Shell Extension registration failed: $LASTEXITCODE"
+          $registerExitCode = Invoke-RegSvr32 $false
+          if ($registerExitCode -ne 0) {
+            Stop-SmokeTest "Shell Extension registration failed: $registerExitCode"
           }
 
           try {
@@ -230,18 +253,18 @@ jobs:
             $handlerKey = "Registry::HKEY_CURRENT_USER\Software\Classes\*\shellex\ContextMenuHandlers\CopyShell"
             if (-not (Test-Path -LiteralPath $classKey) -or
                 -not (Test-Path -LiteralPath $handlerKey)) {
-              throw "Current-user Shell Extension registry keys were not created."
+              Stop-SmokeTest "Current-user Shell Extension registry keys were not created."
             }
 
             $registeredPath = (Get-Item -LiteralPath $classKey).GetValue("")
             if ($registeredPath -ne $extension) {
-              throw "Registered Shell Extension path is incorrect: $registeredPath"
+              Stop-SmokeTest "Registered Shell Extension path is incorrect: $registeredPath"
             }
           }
           finally {
-            & $regsvr32 /s /u $extension
-            if ($LASTEXITCODE -ne 0) {
-              throw "Shell Extension cleanup failed: $LASTEXITCODE"
+            $unregisterExitCode = Invoke-RegSvr32 $true
+            if ($unregisterExitCode -ne 0) {
+              Stop-SmokeTest "Shell Extension cleanup failed: $unregisterExitCode"
             }
           }
 
