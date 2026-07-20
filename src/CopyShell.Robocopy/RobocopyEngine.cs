@@ -92,10 +92,25 @@ public sealed class RobocopyEngine : ICopyEngine
             startInfo.ArgumentList.Add(argument);
         }
 
+        using var job = RobocopyProcessJob.Create();
         using var process = new Process { StartInfo = startInfo };
         if (!process.Start())
         {
             throw new InvalidOperationException("无法启动 robocopy.exe。");
+        }
+
+        try
+        {
+            job.Assign(process);
+        }
+        catch
+        {
+            if (!process.HasExited)
+            {
+                process.Kill(entireProcessTree: true);
+            }
+
+            throw;
         }
 
         var outputTask = PumpOutputAsync(

@@ -44,7 +44,7 @@ public sealed class ShellRequestStoreTests
 
         var loaded = await store.ReadAndDeleteAsync(path);
 
-        Assert.Multiple(() =>
+        using (Assert.EnterMultipleScope())
         {
             Assert.That(loaded.RequestId, Is.EqualTo(request.RequestId));
             Assert.That(loaded.Operation, Is.EqualTo(CopyOperation.Copy));
@@ -52,7 +52,7 @@ public sealed class ShellRequestStoreTests
             Assert.That(
                 File.Exists(Path.Combine(_root, $"{request.RequestId:D}.processing")),
                 Is.False);
-        });
+        }
     }
 
     [Test]

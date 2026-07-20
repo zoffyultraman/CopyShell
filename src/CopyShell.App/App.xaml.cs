@@ -1,4 +1,6 @@
 using CopyShell.Core.Protocol;
+using CopyShell.Core.Models;
+using CopyShell.Core.Services;
 using Microsoft.UI.Xaml;
 
 namespace CopyShell.App;
@@ -15,10 +17,17 @@ public partial class App : Application
     protected override void OnLaunched(LaunchActivatedEventArgs args)
     {
         ShellRequest? request = null;
-        string? startupError = null;
+        TaskJournalEntry? recovery = null;
+        string? startupMessage = null;
+        var startupMessageIsError = false;
+        var journal = new TaskJournalStore();
 
         try
         {
+            var interruptedCount = journal
+                .MarkOrphanedRunsInterruptedAsync()
+                .GetAwaiter()
+                .GetResult();
             var requestStore = new ShellRequestStore();
             requestStore.DeleteStaleRequests(TimeSpan.FromHours(24));
             var requestPath = FindRequestPath(Environment.GetCommandLineArgs());
@@ -31,15 +40,39 @@ public partial class App : Application
             }
             else
             {
-                startupError = "请在资源管理器中选择文件或文件夹，然后使用 CopyShell 右键菜单。";
+                recovery = journal
+                    .GetLatestInterruptedAsync()
+                    .GetAwaiter()
+                    .GetResult();
+                if (recovery is not null)
+                {
+                    startupMessage = "检测到上次意外中断的任务。确认参数后可以重新执行。";
+                }
+                else
+                {
+                    startupMessage = "请在资源管理器中选择文件或文件夹，然后使用 CopyShell 右键菜单。";
+                    startupMessageIsError = true;
+                }
+            }
+
+            if (request is not null && interruptedCount > 0)
+            {
+                startupMessage =
+                    $"检测到 {interruptedCount} 个意外中断的任务。稍后可直接启动 CopyShell 恢复最近一次任务。";
             }
         }
         catch (Exception exception)
         {
-            startupError = exception.Message;
+            startupMessage = exception.Message;
+            startupMessageIsError = true;
         }
 
-        _window = new MainWindow(request, startupError);
+        _window = new MainWindow(
+            request,
+            recovery,
+            journal,
+            startupMessage,
+            startupMessageIsError);
         _window.Activate();
     }
 

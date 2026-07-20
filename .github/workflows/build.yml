@@ -172,6 +172,79 @@ jobs:
           Copy-Item -LiteralPath "LICENSE" -Destination $publishDirectory -Force
           Copy-Item -LiteralPath "README.md" -Destination $publishDirectory -Force
 
+      - name: Smoke test Shell Extension
+        if: steps.solution.outputs.exists == 'true'
+        shell: pwsh
+        run: |
+          $extension = Join-Path `
+            $env:GITHUB_WORKSPACE `
+            "artifacts\publish\$env:RUNTIME_IDENTIFIER\CopyShell.ShellExtension.dll"
+
+          Add-Type @"
+          using System;
+          using System.Runtime.InteropServices;
+
+          public static class CopyShellNativeTest
+          {
+              [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+              public static extern IntPtr LoadLibrary(string path);
+
+              [DllImport("kernel32.dll", CharSet = CharSet.Ansi, SetLastError = true)]
+              public static extern IntPtr GetProcAddress(IntPtr module, string name);
+
+              [DllImport("kernel32.dll")]
+              public static extern bool FreeLibrary(IntPtr module);
+          }
+          "@
+
+          $module = [CopyShellNativeTest]::LoadLibrary($extension)
+          if ($module -eq [IntPtr]::Zero) {
+            throw "Shell Extension could not be loaded."
+          }
+
+          try {
+            $exports = @(
+              "DllCanUnloadNow",
+              "DllGetClassObject",
+              "DllRegisterServer",
+              "DllUnregisterServer"
+            )
+            foreach ($name in $exports) {
+              if ([CopyShellNativeTest]::GetProcAddress($module, $name) -eq [IntPtr]::Zero) {
+                throw "Missing Shell Extension export: $name"
+              }
+            }
+          }
+          finally {
+            [CopyShellNativeTest]::FreeLibrary($module) | Out-Null
+          }
+
+          $regsvr32 = Join-Path $env:SystemRoot "System32\regsvr32.exe"
+          & $regsvr32 /s $extension
+          if ($LASTEXITCODE -ne 0) {
+            throw "Shell Extension registration failed: $LASTEXITCODE"
+          }
+
+          try {
+            $classKey = "Registry::HKEY_CURRENT_USER\Software\Classes\CLSID\{6D5FE7D6-4A85-4ED1-AF8A-4E6F338C3D71}\InprocServer32"
+            $handlerKey = "Registry::HKEY_CURRENT_USER\Software\Classes\*\shellex\ContextMenuHandlers\CopyShell"
+            if (-not (Test-Path -LiteralPath $classKey) -or
+                -not (Test-Path -LiteralPath $handlerKey)) {
+              throw "Current-user Shell Extension registry keys were not created."
+            }
+
+            $registeredPath = (Get-Item -LiteralPath $classKey).GetValue("")
+            if ($registeredPath -ne $extension) {
+              throw "Registered Shell Extension path is incorrect: $registeredPath"
+            }
+          }
+          finally {
+            & $regsvr32 /s /u $extension
+            if ($LASTEXITCODE -ne 0) {
+              throw "Shell Extension cleanup failed: $LASTEXITCODE"
+            }
+          }
+
       - name: Upload build artifacts
         if: steps.solution.outputs.exists == 'true'
         uses: actions/upload-artifact@v7

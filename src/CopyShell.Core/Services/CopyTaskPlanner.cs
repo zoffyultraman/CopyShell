@@ -37,6 +37,12 @@ public sealed class CopyTaskPlanner
             throw new CopyTaskValidationException("同步操作一次只能选择一个源文件夹。");
         }
 
+        if (task.Operation == CopyOperation.Sync &&
+            task.Options.ConflictStrategy != ConflictStrategy.Overwrite)
+        {
+            throw new CopyTaskValidationException("同步操作必须使用覆盖冲突策略。");
+        }
+
         var destination = Normalize(task.Destination);
         if (_fileSystem.FileExists(destination))
         {
@@ -245,6 +251,7 @@ public sealed class CopyTaskPlanner
         var canonical = new StringBuilder()
             .Append(task.TaskId).Append('|')
             .Append(task.Operation).Append('|')
+            .Append(task.Options.ConflictStrategy).Append('|')
             .Append(task.Options.RetryCount).Append('|')
             .Append(task.Options.RetryWaitSeconds).Append('|')
             .Append(task.Options.ThreadCount).Append('|')

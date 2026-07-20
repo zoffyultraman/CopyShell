@@ -76,8 +76,34 @@ public sealed class RobocopyCommandFactory
                 break;
         }
 
+        if (step.Operation != CopyOperation.Sync)
+        {
+            AddConflictArguments(arguments, plan.Options.ConflictStrategy);
+        }
+
         AddCommonArguments(arguments, plan.Options, logPath);
         return new RobocopyCommand(arguments, logPath);
+    }
+
+    private static void AddConflictArguments(
+        ICollection<string> arguments,
+        ConflictStrategy strategy)
+    {
+        switch (strategy)
+        {
+            case ConflictStrategy.Overwrite:
+                break;
+            case ConflictStrategy.SkipExisting:
+                arguments.Add("/XC");
+                arguments.Add("/XN");
+                arguments.Add("/XO");
+                break;
+            case ConflictStrategy.NewerOnly:
+                arguments.Add("/XO");
+                break;
+            default:
+                throw new ArgumentOutOfRangeException(nameof(strategy));
+        }
     }
 
     private static void AddCommonArguments(

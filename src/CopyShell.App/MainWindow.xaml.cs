@@ -18,30 +18,50 @@ public sealed partial class MainWindow : Window
 {
     private const int MaximumLogCharacters = 250_000;
 
-    private readonly ShellRequest? _request;
+    private readonly bool _hasTaskContext;
+    private readonly CopyOperation _operation;
+    private readonly Guid _taskId;
     private readonly ObservableCollection<string> _sources = [];
     private readonly CopyTaskPlanner _planner = new(new PhysicalFileSystemProbe());
+    private readonly ISyncPreviewService _previewService = new FileSystemSyncPreviewService();
     private readonly ICopyEngine _engine = new RobocopyEngine(new RobocopyCommandFactory());
+    private readonly TaskJournalStore _journal;
     private CancellationTokenSource? _cancellation;
     private bool _isRunning;
 
-    public MainWindow(ShellRequest? request, string? startupError)
+    public MainWindow(
+        ShellRequest? request,
+        TaskJournalEntry? recovery,
+        TaskJournalStore journal,
+        string? startupMessage,
+        bool startupMessageIsError)
     {
         InitializeComponent();
-        _request = request;
+        _journal = journal;
+        _hasTaskContext = request is not null || recovery is not null;
+        _operation = request?.Operation ?? recovery?.Task.Operation ?? CopyOperation.Copy;
+        _taskId = recovery?.Task.TaskId ?? Guid.NewGuid();
         SourceList.ItemsSource = _sources;
 
-        foreach (var source in request?.Sources ?? [])
+        foreach (var source in request?.Sources ?? recovery?.Task.Sources ?? [])
         {
             _sources.Add(source);
         }
 
         ConfigureWindow();
-        ConfigureOperation(request?.Operation ?? CopyOperation.Copy);
-
-        if (!string.IsNullOrWhiteSpace(startupError))
+        ConfigureOperation(_operation);
+        if (recovery is not null)
         {
-            StartupInfo.Message = startupError;
+            LoadRecovery(recovery.Task);
+        }
+
+        if (!string.IsNullOrWhiteSpace(startupMessage))
+        {
+            StartupInfo.Title = startupMessageIsError ? "无法创建任务" : "任务恢复";
+            StartupInfo.Severity = startupMessageIsError
+                ? InfoBarSeverity.Error
+                : InfoBarSeverity.Warning;
+            StartupInfo.Message = startupMessage;
             StartupInfo.IsOpen = true;
         }
 
@@ -76,6 +96,7 @@ public sealed partial class MainWindow : Window
         };
 
         SyncWarning.IsOpen = operation == CopyOperation.Sync;
+        ConflictStrategyBox.IsEnabled = operation != CopyOperation.Sync;
     }
 
     private async void OnBrowseClicked(object sender, RoutedEventArgs e)
@@ -99,19 +120,21 @@ public sealed partial class MainWindow : Window
 
     private async void OnStartClicked(object sender, RoutedEventArgs e)
     {
-        if (_isRunning || _request is null)
+        if (_isRunning || !_hasTaskContext)
         {
             return;
         }
 
+        var task = new CopyTask(
+            _taskId,
+            _operation,
+            _sources.ToArray(),
+            DestinationBox.Text.Trim(),
+            CreateOptions());
         CopyPlan plan;
         try
         {
-            plan = _planner.CreatePlan(CopyTask.Create(
-                _request.Operation,
-                _request.Sources,
-                DestinationBox.Text.Trim(),
-                CreateOptions()));
+            plan = _planner.CreatePlan(task);
         }
         catch (Exception exception)
         {
@@ -119,17 +142,30 @@ public sealed partial class MainWindow : Window
             return;
         }
 
-        if (plan.RiskLevel == RiskLevel.Destructive &&
-            !await ConfirmDestructiveOperationAsync(plan))
-        {
-            return;
-        }
-
         BeginRun();
+        var journalStarted = false;
         try
         {
+            if (plan.RiskLevel == RiskLevel.Destructive)
+            {
+                StatusText.Text = "正在分析同步变更…";
+                AppendLog("[CopyShell] 正在生成同步预览。");
+                var preview = await _previewService.CreateAsync(
+                    plan,
+                    _cancellation!.Token);
+                if (!await ConfirmDestructiveOperationAsync(plan, preview))
+                {
+                    StatusText.Text = "已返回修改任务参数。";
+                    return;
+                }
+            }
+
+            await _journal.BeginAsync(task, plan.PlanHash, _cancellation!.Token);
+            journalStarted = true;
             var progress = new Progress<CopyProgress>(OnProgress);
             var result = await _engine.ExecuteAsync(plan, progress, _cancellation!.Token);
+            await RecordResultSafelyAsync(result);
+            journalStarted = false;
             TaskProgress.IsIndeterminate = false;
             TaskProgress.Value = result.Outcome == CopyExecutionOutcome.Failed ? 0 : 100;
             StatusText.Text = RobocopyExitCodeInterpreter.Describe(result.NativeExitCode);
@@ -140,6 +176,11 @@ public sealed partial class MainWindow : Window
         }
         catch (OperationCanceledException)
         {
+            if (journalStarted)
+            {
+                await RecordCanceledSafelyAsync();
+            }
+
             TaskProgress.IsIndeterminate = false;
             TaskProgress.Value = 0;
             StatusText.Text = "任务已取消。";
@@ -147,6 +188,11 @@ public sealed partial class MainWindow : Window
         }
         catch (Exception exception)
         {
+            if (journalStarted)
+            {
+                await RecordFailureSafelyAsync(exception);
+            }
+
             TaskProgress.IsIndeterminate = false;
             TaskProgress.Value = 0;
             StatusText.Text = "任务执行失败。";
@@ -175,18 +221,63 @@ public sealed partial class MainWindow : Window
             ? 2
             : (int)RetryCountBox.Value,
         Restartable = RestartableCheckBox.IsChecked == true,
-        ExcludeJunctions = ExcludeJunctionsCheckBox.IsChecked == true
+        ExcludeJunctions = ExcludeJunctionsCheckBox.IsChecked == true,
+        ConflictStrategy = ConflictStrategyBox.SelectedIndex switch
+        {
+            1 => ConflictStrategy.SkipExisting,
+            2 => ConflictStrategy.NewerOnly,
+            _ => ConflictStrategy.Overwrite
+        }
     };
 
-    private async Task<bool> ConfirmDestructiveOperationAsync(CopyPlan plan)
+    private async Task<bool> ConfirmDestructiveOperationAsync(
+        CopyPlan plan,
+        SyncPreview preview)
     {
         var destination = plan.Steps.Single().DestinationPath;
+        var detailLines = preview.Items.Select(FormatPreviewItem).ToList();
+        if (preview.IsTruncated)
+        {
+            detailLines.Add("…其余变更未在列表中显示");
+        }
+
+        var content = new StackPanel { Spacing = 10, MaxWidth = 620 };
+        content.Children.Add(new TextBlock
+        {
+            Text =
+                $"新增：{preview.FilesToAdd} 个文件、{preview.DirectoriesToAdd} 个文件夹\n" +
+                $"更新：{preview.FilesToUpdate} 个文件\n" +
+                $"删除：{preview.FilesToDelete} 个文件、{preview.DirectoriesToDelete} 个文件夹\n" +
+                $"预计写入：{FormatBytes(preview.BytesToCopy)}；删除：{FormatBytes(preview.BytesToDelete)}",
+            TextWrapping = TextWrapping.Wrap
+        });
+        content.Children.Add(new TextBlock
+        {
+            Text = $"同步目标：\n{destination}",
+            FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
+            TextWrapping = TextWrapping.Wrap
+        });
+        if (detailLines.Count > 0)
+        {
+            content.Children.Add(new ScrollViewer
+            {
+                MaxHeight = 260,
+                Content = new TextBlock
+                {
+                    FontFamily = new Microsoft.UI.Xaml.Media.FontFamily("Consolas"),
+                    FontSize = 12,
+                    IsTextSelectionEnabled = true,
+                    Text = string.Join(Environment.NewLine, detailLines),
+                    TextWrapping = TextWrapping.NoWrap
+                }
+            });
+        }
+
         var dialog = new ContentDialog
         {
             XamlRoot = RootGrid.XamlRoot,
             Title = "确认镜像同步",
-            Content =
-                $"目标中源端不存在的文件和文件夹将被删除：\n\n{destination}\n\n请确认目标路径无误。",
+            Content = content,
             PrimaryButtonText = "确认同步",
             CloseButtonText = "返回",
             DefaultButton = ContentDialogButton.Close
@@ -219,6 +310,7 @@ public sealed partial class MainWindow : Window
         RetryCountBox.IsEnabled = false;
         RestartableCheckBox.IsEnabled = false;
         ExcludeJunctionsCheckBox.IsEnabled = false;
+        ConflictStrategyBox.IsEnabled = false;
         ProgressArea.Visibility = Visibility.Visible;
         LogExpander.Visibility = Visibility.Visible;
         LogBox.Text = string.Empty;
@@ -238,6 +330,7 @@ public sealed partial class MainWindow : Window
         RetryCountBox.IsEnabled = true;
         RestartableCheckBox.IsEnabled = true;
         ExcludeJunctionsCheckBox.IsEnabled = true;
+        ConflictStrategyBox.IsEnabled = _operation != CopyOperation.Sync;
         UpdateStartButton();
     }
 
@@ -245,7 +338,7 @@ public sealed partial class MainWindow : Window
     {
         StartButton.IsEnabled =
             !_isRunning &&
-            _request is not null &&
+            _hasTaskContext &&
             _sources.Count > 0 &&
             !string.IsNullOrWhiteSpace(DestinationBox.Text);
     }
@@ -265,5 +358,89 @@ public sealed partial class MainWindow : Window
         }
 
         LogBox.Text = updated;
+    }
+
+    private void LoadRecovery(CopyTask task)
+    {
+        DestinationBox.Text = task.Destination;
+        ThreadCountBox.Value = task.Options.ThreadCount;
+        RetryCountBox.Value = task.Options.RetryCount;
+        RestartableCheckBox.IsChecked = task.Options.Restartable;
+        ExcludeJunctionsCheckBox.IsChecked = task.Options.ExcludeJunctions;
+        ConflictStrategyBox.SelectedIndex = task.Options.ConflictStrategy switch
+        {
+            ConflictStrategy.SkipExisting => 1,
+            ConflictStrategy.NewerOnly => 2,
+            _ => 0
+        };
+    }
+
+    private async Task RecordResultSafelyAsync(CopyExecutionResult result)
+    {
+        try
+        {
+            await _journal.RecordResultAsync(
+                _taskId,
+                result,
+                CancellationToken.None);
+        }
+        catch (Exception exception)
+        {
+            AppendLog($"[CopyShell] 无法保存任务结果：{exception.Message}");
+        }
+    }
+
+    private async Task RecordCanceledSafelyAsync()
+    {
+        try
+        {
+            await _journal.RecordCanceledAsync(_taskId, CancellationToken.None);
+        }
+        catch (Exception exception)
+        {
+            AppendLog($"[CopyShell] 无法保存取消状态：{exception.Message}");
+        }
+    }
+
+    private async Task RecordFailureSafelyAsync(Exception failure)
+    {
+        try
+        {
+            await _journal.RecordFailureAsync(
+                _taskId,
+                failure.ToString(),
+                CancellationToken.None);
+        }
+        catch (Exception exception)
+        {
+            AppendLog($"[CopyShell] 无法保存失败状态：{exception.Message}");
+        }
+    }
+
+    private static string FormatPreviewItem(SyncPreviewItem item)
+    {
+        var change = item.Change switch
+        {
+            SyncPreviewChange.Add => "+",
+            SyncPreviewChange.Update => "~",
+            SyncPreviewChange.Delete => "-",
+            _ => "?"
+        };
+        var kind = item.ItemKind == CopySourceKind.Directory ? "[目录]" : "[文件]";
+        return $"{change} {kind} {item.RelativePath}";
+    }
+
+    private static string FormatBytes(long bytes)
+    {
+        string[] units = ["B", "KiB", "MiB", "GiB", "TiB"];
+        var value = (double)Math.Max(0, bytes);
+        var unit = 0;
+        while (value >= 1024 && unit < units.Length - 1)
+        {
+            value /= 1024;
+            unit++;
+        }
+
+        return $"{value:0.##} {units[unit]}";
     }
 }

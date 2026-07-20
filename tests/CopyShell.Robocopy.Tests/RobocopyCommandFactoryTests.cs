@@ -19,7 +19,7 @@ public sealed class RobocopyCommandFactoryTests
 
         var command = factory.CreateCommands(plan).Single();
 
-        Assert.Multiple(() =>
+        using (Assert.EnterMultipleScope())
         {
             Assert.That(command.Arguments.Take(2), Is.EqualTo(new[] { @"C:\Source", @"D:\Target\Source" }));
             Assert.That(command.Arguments, Does.Contain("/E"));
@@ -31,7 +31,7 @@ public sealed class RobocopyCommandFactoryTests
             Assert.That(command.Arguments, Does.Contain("/Z"));
             Assert.That(command.Arguments, Does.Contain("/XJ"));
             Assert.That(command.Arguments.Any(argument => argument.StartsWith("/UNILOG:")), Is.True);
-        });
+        }
     }
 
     [Test]
@@ -48,12 +48,12 @@ public sealed class RobocopyCommandFactoryTests
             .CreateCommands(plan)
             .Single();
 
-        Assert.Multiple(() =>
+        using (Assert.EnterMultipleScope())
         {
             Assert.That(command.Arguments.Take(3), Is.EqualTo(new[] { @"C:\Source", @"D:\Target", "demo.txt" }));
             Assert.That(command.Arguments, Does.Contain("/MOV"));
             Assert.That(command.Arguments, Does.Not.Contain("/MOVE"));
-        });
+        }
     }
 
     [Test]
@@ -74,11 +74,64 @@ public sealed class RobocopyCommandFactoryTests
         Assert.That(command.Arguments, Does.Contain("/MIR"));
     }
 
-    private static CopyPlan CreatePlan(CopyOperation operation, CopyStep step) =>
+    [Test]
+    public void CreateCommands_ForSkipExisting_ExcludesAllExistingVariants()
+    {
+        var plan = CreatePlan(
+            CopyOperation.Copy,
+            new CopyStep(
+                @"C:\Source",
+                CopySourceKind.Directory,
+                @"D:\Target\Source",
+                CopyOperation.Copy),
+            new CopyOptions { ConflictStrategy = ConflictStrategy.SkipExisting });
+
+        var arguments = new RobocopyCommandFactory(@"C:\Logs")
+            .CreateCommands(plan)
+            .Single()
+            .Arguments;
+
+        using (Assert.EnterMultipleScope())
+        {
+            Assert.That(arguments, Does.Contain("/XC"));
+            Assert.That(arguments, Does.Contain("/XN"));
+            Assert.That(arguments, Does.Contain("/XO"));
+        }
+    }
+
+    [Test]
+    public void CreateCommands_ForNewerOnly_ExcludesOlderSources()
+    {
+        var plan = CreatePlan(
+            CopyOperation.Copy,
+            new CopyStep(
+                @"C:\Source",
+                CopySourceKind.Directory,
+                @"D:\Target\Source",
+                CopyOperation.Copy),
+            new CopyOptions { ConflictStrategy = ConflictStrategy.NewerOnly });
+
+        var arguments = new RobocopyCommandFactory(@"C:\Logs")
+            .CreateCommands(plan)
+            .Single()
+            .Arguments;
+
+        using (Assert.EnterMultipleScope())
+        {
+            Assert.That(arguments, Does.Contain("/XO"));
+            Assert.That(arguments, Does.Not.Contain("/XC"));
+            Assert.That(arguments, Does.Not.Contain("/XN"));
+        }
+    }
+
+    private static CopyPlan CreatePlan(
+        CopyOperation operation,
+        CopyStep step,
+        CopyOptions? options = null) =>
         new(
             Guid.NewGuid(),
             operation,
-            new CopyOptions(),
+            options ?? new CopyOptions(),
             [step],
             operation == CopyOperation.Sync ? RiskLevel.Destructive : RiskLevel.Normal,
             [],

@@ -92,11 +92,23 @@
                         <Grid.RowDefinitions>
                             <RowDefinition Height="Auto" />
                             <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
                         </Grid.RowDefinitions>
 
+                        <ComboBox
+                            x:Name="ConflictStrategyBox"
+                            Grid.Row="0"
+                            Grid.Column="0"
+                            Grid.ColumnSpan="2"
+                            Header="文件冲突处理"
+                            SelectedIndex="0">
+                            <ComboBoxItem Content="覆盖不同的目标文件" />
+                            <ComboBoxItem Content="跳过所有已存在文件" />
+                            <ComboBoxItem Content="仅复制较新的文件" />
+                        </ComboBox>
                         <NumberBox
                             x:Name="ThreadCountBox"
-                            Grid.Row="0"
+                            Grid.Row="1"
                             Grid.Column="0"
                             Header="并行线程数"
                             Maximum="128"
@@ -105,7 +117,7 @@
                             Value="16" />
                         <NumberBox
                             x:Name="RetryCountBox"
-                            Grid.Row="0"
+                            Grid.Row="1"
                             Grid.Column="1"
                             Header="失败重试次数"
                             Maximum="100"
@@ -114,13 +126,13 @@
                             Value="2" />
                         <CheckBox
                             x:Name="RestartableCheckBox"
-                            Grid.Row="1"
+                            Grid.Row="2"
                             Grid.Column="0"
                             IsChecked="True"
                             Content="断点续传（/Z）" />
                         <CheckBox
                             x:Name="ExcludeJunctionsCheckBox"
-                            Grid.Row="1"
+                            Grid.Row="2"
                             Grid.Column="1"
                             IsChecked="True"
                             Content="跳过目录联接（/XJ）" />

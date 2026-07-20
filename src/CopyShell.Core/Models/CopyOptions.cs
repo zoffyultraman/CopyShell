@@ -2,6 +2,8 @@ namespace CopyShell.Core.Models;
 
 public sealed record CopyOptions
 {
+    public ConflictStrategy ConflictStrategy { get; init; } = ConflictStrategy.Overwrite;
+
     public int RetryCount { get; init; } = 2;
 
     public int RetryWaitSeconds { get; init; } = 2;

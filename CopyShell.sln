@@ -16,6 +16,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "CopyShell.Robocopy.Tests", 
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "CopyShell.Protocol.Tests", "tests\CopyShell.Protocol.Tests\CopyShell.Protocol.Tests.csproj", "{BAE9985F-F85F-43CD-9901-6F61A0C2FE9B}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "CopyShell.IntegrationTests", "tests\CopyShell.IntegrationTests\CopyShell.IntegrationTests.csproj", "{91F345AD-529F-4F0D-A22F-88C806AF29B8}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|x64 = Debug|x64
@@ -50,6 +52,10 @@ Global
 		{BAE9985F-F85F-43CD-9901-6F61A0C2FE9B}.Debug|x64.Build.0 = Debug|x64
 		{BAE9985F-F85F-43CD-9901-6F61A0C2FE9B}.Release|x64.ActiveCfg = Release|x64
 		{BAE9985F-F85F-43CD-9901-6F61A0C2FE9B}.Release|x64.Build.0 = Release|x64
+		{91F345AD-529F-4F0D-A22F-88C806AF29B8}.Debug|x64.ActiveCfg = Debug|x64
+		{91F345AD-529F-4F0D-A22F-88C806AF29B8}.Debug|x64.Build.0 = Debug|x64
+		{91F345AD-529F-4F0D-A22F-88C806AF29B8}.Release|x64.ActiveCfg = Release|x64
+		{91F345AD-529F-4F0D-A22F-88C806AF29B8}.Release|x64.Build.0 = Release|x64
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

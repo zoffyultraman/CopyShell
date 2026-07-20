@@ -36,14 +36,14 @@ public sealed class CopyTaskPlannerTests
             destination));
 
         Assert.That(plan.Steps, Has.Count.EqualTo(1));
-        Assert.Multiple(() =>
+        using (Assert.EnterMultipleScope())
         {
             Assert.That(plan.Steps[0].SourceKind, Is.EqualTo(CopySourceKind.Directory));
             Assert.That(
                 plan.Steps[0].DestinationPath,
                 Is.EqualTo(Path.Combine(destination, "源 文件夹")));
             Assert.That(plan.RiskLevel, Is.EqualTo(RiskLevel.Normal));
-        });
+        }
     }
 
     [Test]
@@ -58,13 +58,13 @@ public sealed class CopyTaskPlannerTests
             [source],
             destination));
 
-        Assert.Multiple(() =>
+        using (Assert.EnterMultipleScope())
         {
             Assert.That(plan.Steps[0].SourceKind, Is.EqualTo(CopySourceKind.File));
             Assert.That(
                 plan.Steps[0].DestinationPath,
                 Is.EqualTo(Path.Combine(destination, "演示 文件.txt")));
-        });
+        }
     }
 
     [Test]
@@ -74,12 +74,29 @@ public sealed class CopyTaskPlannerTests
         var second = Directory.CreateDirectory(Path.Combine(_root, "B")).FullName;
         var destination = Directory.CreateDirectory(Path.Combine(_root, "目标")).FullName;
 
-        Assert.That(
-            () => _planner.CreatePlan(CopyTask.Create(
+        Assert.Throws<CopyTaskValidationException>(() =>
+        {
+            _planner.CreatePlan(CopyTask.Create(
                 CopyOperation.Sync,
                 [first, second],
-                destination)),
-            Throws.TypeOf<CopyTaskValidationException>());
+                destination));
+        });
+    }
+
+    [Test]
+    public void Sync_RejectsNonOverwriteConflictStrategy()
+    {
+        var source = Directory.CreateDirectory(Path.Combine(_root, "源")).FullName;
+        var destination = Directory.CreateDirectory(Path.Combine(_root, "目标")).FullName;
+
+        Assert.Throws<CopyTaskValidationException>(() =>
+        {
+            _planner.CreatePlan(CopyTask.Create(
+                CopyOperation.Sync,
+                [source],
+                destination,
+                new CopyOptions { ConflictStrategy = ConflictStrategy.SkipExisting }));
+        });
     }
 
     [Test]
@@ -88,12 +105,13 @@ public sealed class CopyTaskPlannerTests
         var source = Directory.CreateDirectory(Path.Combine(_root, "源")).FullName;
         var destination = Directory.CreateDirectory(Path.Combine(source, "目标")).FullName;
 
-        Assert.That(
-            () => _planner.CreatePlan(CopyTask.Create(
+        Assert.Throws<CopyTaskValidationException>(() =>
+        {
+            _planner.CreatePlan(CopyTask.Create(
                 CopyOperation.Copy,
                 [source],
-                destination)),
-            Throws.TypeOf<CopyTaskValidationException>());
+                destination));
+        });
     }
 
     [Test]
@@ -103,12 +121,13 @@ public sealed class CopyTaskPlannerTests
         var destination = Path.Combine(_root, "目标.txt");
         File.WriteAllText(destination, "not a directory");
 
-        Assert.That(
-            () => _planner.CreatePlan(CopyTask.Create(
+        Assert.Throws<CopyTaskValidationException>(() =>
+        {
+            _planner.CreatePlan(CopyTask.Create(
                 CopyOperation.Copy,
                 [source],
-                destination)),
-            Throws.TypeOf<CopyTaskValidationException>());
+                destination));
+        });
     }
 
     [Test]
@@ -122,10 +141,10 @@ public sealed class CopyTaskPlannerTests
             [source],
             destination));
 
-        Assert.Multiple(() =>
+        using (Assert.EnterMultipleScope())
         {
             Assert.That(plan.RiskLevel, Is.EqualTo(RiskLevel.Destructive));
             Assert.That(plan.Warnings, Is.Not.Empty);
-        });
+        }
     }
 }
