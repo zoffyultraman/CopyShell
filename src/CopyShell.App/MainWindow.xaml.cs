@@ -15,10 +15,11 @@ using WinRT.Interop;
 
 namespace CopyShell.App;
 
-public sealed partial class MainWindow : Window
+public sealed class MainWindow : Window
 {
     private const int MaximumLogCharacters = 250_000;
 
+    private Grid RootGrid = null!;
     private TextBlock OperationTitle = null!;
     private TextBlock OperationDescription = null!;
     private InfoBar StartupInfo = null!;
@@ -68,9 +69,9 @@ public sealed partial class MainWindow : Window
         string? startupMessage,
         bool startupMessageIsError)
     {
-        AppDiagnostics.Write("MainWindow.InitializeComponent started.");
-        InitializeComponent();
-        AppDiagnostics.Write("MainWindow.InitializeComponent completed.");
+        AppDiagnostics.Write("MainWindow programmatic initialization started.");
+        RootGrid = new Grid();
+        Content = RootGrid;
         BuildInterface();
         DestinationBox.TextChanged += OnDestinationChanged;
         QueueList.SelectionChanged += OnQueueSelectionChanged;
