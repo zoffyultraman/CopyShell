@@ -1,6 +1,7 @@
 using CopyShell.Core.Protocol;
 using CopyShell.Core.Models;
 using CopyShell.Core.Services;
+using Microsoft.UI.Dispatching;
 using Microsoft.UI.Xaml;
 using System.Runtime.InteropServices;
 
@@ -125,7 +126,8 @@ public partial class App : Application
                     "--health-check"))
             {
                 AppDiagnostics.Write("Application health check succeeded.");
-                Environment.Exit(0);
+                ExitHealthCheck(0);
+                return;
             }
         }
         catch (Exception exception)
@@ -137,7 +139,8 @@ public partial class App : Application
                     Environment.GetCommandLineArgs(),
                     "--health-check"))
             {
-                Environment.Exit(1);
+                ExitHealthCheck(1);
+                return;
             }
 
             ShowFatalStartupError(exception);
@@ -190,10 +193,25 @@ public partial class App : Application
             0x00000010);
     }
 
+    private static void ExitHealthCheck(uint exitCode)
+    {
+        var dispatcherQueue = DispatcherQueue.GetForCurrentThread();
+        if (dispatcherQueue is not null &&
+            dispatcherQueue.TryEnqueue(() => ExitProcess(exitCode)))
+        {
+            return;
+        }
+
+        ExitProcess(exitCode);
+    }
+
     [DllImport("user32.dll", CharSet = CharSet.Unicode)]
     private static extern int MessageBoxW(
         IntPtr window,
         string text,
         string caption,
         uint type);
+
+    [DllImport("kernel32.dll")]
+    private static extern void ExitProcess(uint exitCode);
 }
