@@ -251,6 +251,7 @@ jobs:
           $startInfo.WorkingDirectory = Split-Path -Parent $application
           $startInfo.UseShellExecute = $false
           $startInfo.ArgumentList.Add("--health-check")
+          $startedAt = Get-Date
           $process = [System.Diagnostics.Process]::Start($startInfo)
           if (-not $process.WaitForExit(20000)) {
             $process.Kill($true)
@@ -261,6 +262,13 @@ jobs:
           $exitCode = $process.ExitCode
           $process.Dispose()
           if ($exitCode -ne 0) {
+            $exitCodeHex = [System.BitConverter]::ToUInt32(
+              [System.BitConverter]::GetBytes([int]$exitCode),
+              0
+            ).ToString("X8")
+            Write-Output `
+              "::error title=Application health check::Exit code $exitCode (0x$exitCodeHex)"
+
             $log = Join-Path `
               $env:LOCALAPPDATA `
               "CopyShell\Logs\App\$([DateTimeOffset]::UtcNow.ToString('yyyy-MM')).log"
@@ -272,6 +280,45 @@ jobs:
                 -replace "`n", "%0A"
               Write-Output "::error title=Application health check::$annotation"
             }
+            else {
+              Write-Output `
+                "::error title=Application health check::The managed startup log was not created."
+            }
+
+            try {
+              $events = Get-WinEvent `
+                -FilterHashtable @{
+                  LogName = "Application"
+                  StartTime = $startedAt.AddMinutes(-1)
+                } `
+                -ErrorAction Stop |
+                Where-Object {
+                  $_.ProviderName -in @(
+                    "Application Error",
+                    ".NET Runtime",
+                    "Windows Error Reporting"
+                  ) -and
+                  $_.Message -match "CopyShell\.App"
+                } |
+                Select-Object -First 10
+
+              foreach ($event in $events) {
+                $eventText = (
+                  "Provider=$($event.ProviderName); " +
+                  "Id=$($event.Id); " +
+                  $event.Message
+                ) `
+                  -replace "%", "%25" `
+                  -replace "`r", "%0D" `
+                  -replace "`n", "%0A"
+                Write-Output `
+                  "::error title=Windows application event::$eventText"
+              }
+            }
+            catch {
+              Write-Host "Could not query Windows application events: $_"
+            }
+
             throw "Application health check failed: $exitCode"
           }
 
