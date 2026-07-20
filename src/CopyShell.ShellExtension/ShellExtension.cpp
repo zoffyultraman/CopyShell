@@ -1,6 +1,7 @@
 #include <windows.h>
 #include <shellapi.h>
 #include <shlobj.h>
+#include <shobjidl.h>
 #include <strsafe.h>
 
 #include <array>
@@ -22,6 +23,21 @@ namespace
         {0xaf, 0x8a, 0x4e, 0x6f, 0x33, 0x8c, 0x3d, 0x71}};
     constexpr wchar_t kClassIdText[] = L"{6D5FE7D6-4A85-4ED1-AF8A-4E6F338C3D71}";
     constexpr wchar_t kDisplayName[] = L"CopyShell";
+    constexpr GUID kCopyCommandId{
+        0x5d63327e,
+        0xf9d8,
+        0x46db,
+        {0xa4, 0xee, 0x18, 0xd8, 0x22, 0xe5, 0xd3, 0x9f}};
+    constexpr GUID kMoveCommandId{
+        0xec299f1d,
+        0xf09d,
+        0x47af,
+        {0xa8, 0x93, 0xbf, 0xa4, 0x83, 0x85, 0x13, 0x21}};
+    constexpr GUID kSyncCommandId{
+        0xa9d21b0d,
+        0xb424,
+        0x46f4,
+        {0xb0, 0x50, 0x61, 0x84, 0xc4, 0x95, 0xd4, 0x7e}};
     constexpr size_t kMaximumRequestBytes = 1024 * 1024;
     constexpr UINT kMaximumSources = 4096;
     constexpr UINT kCommandCount = 3;
@@ -41,6 +57,12 @@ namespace
         {L"高级复制到…", "copyshell.copy", L"使用 Robocopy 复制所选项目", L"copy"},
         {L"高级移动到…", "copyshell.move", L"使用 Robocopy 移动所选项目", L"move"},
         {L"同步到…", "copyshell.sync", L"使用 Robocopy 镜像同步所选文件夹", L"sync"},
+    }};
+
+    constexpr std::array<GUID, kCommandCount> kCommandIds{{
+        kCopyCommandId,
+        kMoveCommandId,
+        kSyncCommandId,
     }};
 
     std::wstring GetModulePath()
@@ -348,6 +370,118 @@ namespace
         return S_OK;
     }
 
+    HRESULT GetExplorerSources(
+        IShellItemArray* items,
+        std::vector<std::wstring>& sources)
+    {
+        sources.clear();
+        if (items == nullptr)
+        {
+            return E_INVALIDARG;
+        }
+
+        DWORD count{};
+        HRESULT result = items->GetCount(&count);
+        if (FAILED(result))
+        {
+            return result;
+        }
+        if (count == 0 || count > kMaximumSources)
+        {
+            return E_INVALIDARG;
+        }
+
+        sources.reserve(count);
+        for (DWORD index = 0; index < count; ++index)
+        {
+            IShellItem* item{};
+            result = items->GetItemAt(index, &item);
+            if (FAILED(result))
+            {
+                return result;
+            }
+
+            PWSTR path{};
+            result = item->GetDisplayName(SIGDN_FILESYSPATH, &path);
+            item->Release();
+            if (FAILED(result))
+            {
+                return result;
+            }
+
+            try
+            {
+                sources.emplace_back(path);
+            }
+            catch (...)
+            {
+                CoTaskMemFree(path);
+                throw;
+            }
+            CoTaskMemFree(path);
+        }
+
+        return sources.empty() ? E_INVALIDARG : S_OK;
+    }
+
+    HRESULT GetExplorerCommandState(
+        UINT commandIndex,
+        IShellItemArray* items,
+        EXPCMDSTATE* state)
+    {
+        if (state == nullptr)
+        {
+            return E_POINTER;
+        }
+
+        *state = ECS_DISABLED;
+        if (items == nullptr)
+        {
+            return S_OK;
+        }
+
+        DWORD count{};
+        HRESULT result = items->GetCount(&count);
+        if (FAILED(result) || count == 0 || count > kMaximumSources)
+        {
+            return SUCCEEDED(result) ? S_OK : result;
+        }
+
+        if (commandIndex != 2)
+        {
+            *state = ECS_ENABLED;
+            return S_OK;
+        }
+
+        if (count != 1)
+        {
+            return S_OK;
+        }
+
+        IShellItem* item{};
+        result = items->GetItemAt(0, &item);
+        if (FAILED(result))
+        {
+            return result;
+        }
+
+        SFGAOF attributes{};
+        result = item->GetAttributes(SFGAO_FOLDER | SFGAO_FILESYSTEM, &attributes);
+        item->Release();
+        if (FAILED(result))
+        {
+            return result;
+        }
+
+        if ((attributes & (SFGAO_FOLDER | SFGAO_FILESYSTEM)) ==
+            (SFGAO_FOLDER | SFGAO_FILESYSTEM))
+        {
+            *state = ECS_ENABLED;
+        }
+
+        return S_OK;
+    }
+
     HRESULT SetRegistryString(
         HKEY root,
         const std::wstring& subkey,
@@ -440,7 +574,267 @@ namespace
         void* _value;
     };
 
-    class ShellExtension final : public IShellExtInit, public IContextMenu
+    class ExplorerCommand final : public IExplorerCommand
+    {
+    public:
+        explicit ExplorerCommand(UINT commandIndex)
+            : _commandIndex(commandIndex)
+        {
+            ++g_objectCount;
+        }
+
+        ~ExplorerCommand()
+        {
+            --g_objectCount;
+        }
+
+        IFACEMETHODIMP QueryInterface(REFIID interfaceId, void** object) override
+        {
+            if (object == nullptr)
+            {
+                return E_POINTER;
+            }
+
+            *object = nullptr;
+            if (IsEqualIID(interfaceId, IID_IUnknown) ||
+                IsEqualIID(interfaceId, IID_IExplorerCommand))
+            {
+                *object = static_cast<IExplorerCommand*>(this);
+                AddRef();
+                return S_OK;
+            }
+
+            return E_NOINTERFACE;
+        }
+
+        IFACEMETHODIMP_(ULONG) AddRef() override
+        {
+            return static_cast<ULONG>(InterlockedIncrement(&_referenceCount));
+        }
+
+        IFACEMETHODIMP_(ULONG) Release() override
+        {
+            const long count = InterlockedDecrement(&_referenceCount);
+            if (count == 0)
+            {
+                delete this;
+            }
+            return static_cast<ULONG>(count);
+        }
+
+        IFACEMETHODIMP GetTitle(IShellItemArray*, PWSTR* title) override
+        {
+            if (title == nullptr || _commandIndex >= kCommandCount)
+            {
+                return E_INVALIDARG;
+            }
+            return SHStrDupW(kCommands[_commandIndex].label, title);
+        }
+
+        IFACEMETHODIMP GetIcon(IShellItemArray*, PWSTR* icon) override
+        {
+            if (icon == nullptr)
+            {
+                return E_POINTER;
+            }
+            *icon = nullptr;
+            return E_NOTIMPL;
+        }
+
+        IFACEMETHODIMP GetToolTip(IShellItemArray*, PWSTR* toolTip) override
+        {
+            if (toolTip == nullptr || _commandIndex >= kCommandCount)
+            {
+                return E_INVALIDARG;
+            }
+            return SHStrDupW(kCommands[_commandIndex].help, toolTip);
+        }
+
+        IFACEMETHODIMP GetCanonicalName(GUID* canonicalName) override
+        {
+            if (canonicalName == nullptr || _commandIndex >= kCommandCount)
+            {
+                return E_INVALIDARG;
+            }
+            *canonicalName = kCommandIds[_commandIndex];
+            return S_OK;
+        }
+
+        IFACEMETHODIMP GetState(
+            IShellItemArray* items,
+            BOOL,
+            EXPCMDSTATE* state) override
+        {
+            return GetExplorerCommandState(_commandIndex, items, state);
+        }
+
+        IFACEMETHODIMP Invoke(IShellItemArray* items, IBindCtx*) override
+        {
+            if (_commandIndex >= kCommandCount)
+            {
+                return E_INVALIDARG;
+            }
+
+            try
+            {
+                std::vector<std::wstring> sources;
+                const HRESULT result = GetExplorerSources(items, sources);
+                if (FAILED(result))
+                {
+                    return result;
+                }
+                return LaunchApplication(
+                    kCommands[_commandIndex].operation,
+                    sources);
+            }
+            catch (const std::bad_alloc&)
+            {
+                return E_OUTOFMEMORY;
+            }
+            catch (...)
+            {
+                return E_FAIL;
+            }
+        }
+
+        IFACEMETHODIMP GetFlags(EXPCMDFLAGS* flags) override
+        {
+            if (flags == nullptr)
+            {
+                return E_POINTER;
+            }
+            *flags = ECF_DEFAULT;
+            return S_OK;
+        }
+
+        IFACEMETHODIMP EnumSubCommands(
+            IEnumExplorerCommand** commands) override
+        {
+            if (commands == nullptr)
+            {
+                return E_POINTER;
+            }
+            *commands = nullptr;
+            return E_NOTIMPL;
+        }
+
+    private:
+        long _referenceCount{1};
+        UINT _commandIndex;
+    };
+
+    class ExplorerCommandEnumerator final : public IEnumExplorerCommand
+    {
+    public:
+        explicit ExplorerCommandEnumerator(ULONG currentIndex = 0)
+            : _currentIndex(currentIndex)
+        {
+            ++g_objectCount;
+        }
+
+        ~ExplorerCommandEnumerator()
+        {
+            --g_objectCount;
+        }
+
+        IFACEMETHODIMP QueryInterface(REFIID interfaceId, void** object) override
+        {
+            if (object == nullptr)
+            {
+                return E_POINTER;
+            }
+
+            *object = nullptr;
+            if (IsEqualIID(interfaceId, IID_IUnknown) ||
+                IsEqualIID(interfaceId, IID_IEnumExplorerCommand))
+            {
+                *object = static_cast<IEnumExplorerCommand*>(this);
+                AddRef();
+                return S_OK;
+            }
+
+            return E_NOINTERFACE;
+        }
+
+        IFACEMETHODIMP_(ULONG) AddRef() override
+        {
+            return static_cast<ULONG>(InterlockedIncrement(&_referenceCount));
+        }
+
+        IFACEMETHODIMP_(ULONG) Release() override
+        {
+            const long count = InterlockedDecrement(&_referenceCount);
+            if (count == 0)
+            {
+                delete this;
+            }
+            return static_cast<ULONG>(count);
+        }
+
+        IFACEMETHODIMP Next(
+            ULONG count,
+            IExplorerCommand** commands,
+            ULONG* fetched) override
+        {
+            if (commands == nullptr || (count > 1 && fetched == nullptr))
+            {
+                return E_POINTER;
+            }
+
+            ULONG created{};
+            while (created < count && _currentIndex < kCommandCount)
+            {
+                auto* command = new (std::nothrow) ExplorerCommand(_currentIndex);
+                if (command == nullptr)
+                {
+                    break;
+                }
+                commands[created] = command;
+                ++created;
+                ++_currentIndex;
+            }
+
+            if (fetched != nullptr)
+            {
+                *fetched = created;
+            }
+            return created == count ? S_OK : S_FALSE;
+        }
+
+        IFACEMETHODIMP Skip(ULONG count) override
+        {
+            const ULONG remaining =
+                static_cast<ULONG>(kCommandCount) - _currentIndex;
+            const ULONG skipped = (count < remaining) ? count : remaining;
+            _currentIndex += skipped;
+            return skipped == count ? S_OK : S_FALSE;
+        }
+
+        IFACEMETHODIMP Reset() override
+        {
+            _currentIndex = 0;
+            return S_OK;
+        }
+
+        IFACEMETHODIMP Clone(IEnumExplorerCommand** commands) override
+        {
+            if (commands == nullptr)
+            {
+                return E_POINTER;
+            }
+            *commands = new (std::nothrow) ExplorerCommandEnumerator(_currentIndex);
+            return *commands == nullptr ? E_OUTOFMEMORY : S_OK;
+        }
+
+    private:
+        long _referenceCount{1};
+        ULONG _currentIndex;
+    };
+
+    class ShellExtension final :
+        public IShellExtInit,
+        public IContextMenu,
+        public IExplorerCommand
     {
     public:
         ShellExtension()
@@ -469,6 +863,10 @@ namespace
             else if (IsEqualIID(interfaceId, IID_IContextMenu))
             {
                 *object = static_cast<IContextMenu*>(this);
+            }
+            else if (IsEqualIID(interfaceId, IID_IExplorerCommand))
+            {
+                *object = static_cast<IExplorerCommand*>(this);
             }
             else
             {
@@ -691,6 +1089,100 @@ namespace
             default:
                 return E_NOTIMPL;
             }
+        }
+
+        IFACEMETHODIMP GetTitle(IShellItemArray*, PWSTR* title) override
+        {
+            if (title == nullptr)
+            {
+                return E_POINTER;
+            }
+            return SHStrDupW(kDisplayName, title);
+        }
+
+        IFACEMETHODIMP GetIcon(IShellItemArray*, PWSTR* icon) override
+        {
+            if (icon == nullptr)
+            {
+                return E_POINTER;
+            }
+            *icon = nullptr;
+            return E_NOTIMPL;
+        }
+
+        IFACEMETHODIMP GetToolTip(IShellItemArray*, PWSTR* toolTip) override
+        {
+            if (toolTip == nullptr)
+            {
+                return E_POINTER;
+            }
+            return SHStrDupW(L"使用 CopyShell 执行可靠复制、移动或同步", toolTip);
+        }
+
+        IFACEMETHODIMP GetCanonicalName(GUID* canonicalName) override
+        {
+            if (canonicalName == nullptr)
+            {
+                return E_POINTER;
+            }
+            *canonicalName = kClassId;
+            return S_OK;
+        }
+
+        IFACEMETHODIMP GetState(
+            IShellItemArray* items,
+            BOOL,
+            EXPCMDSTATE* state) override
+        {
+            if (state == nullptr)
+            {
+                return E_POINTER;
+            }
+
+            *state = ECS_DISABLED;
+            if (items == nullptr)
+            {
+                return S_OK;
+            }
+
+            DWORD count{};
+            const HRESULT result = items->GetCount(&count);
+            if (FAILED(result))
+            {
+                return result;
+            }
+            if (count > 0 && count <= kMaximumSources)
+            {
+                *state = ECS_ENABLED;
+            }
+            return S_OK;
+        }
+
+        IFACEMETHODIMP Invoke(IShellItemArray*, IBindCtx*) override
+        {
+            return E_NOTIMPL;
+        }
+
+        IFACEMETHODIMP GetFlags(EXPCMDFLAGS* flags) override
+        {
+            if (flags == nullptr)
+            {
+                return E_POINTER;
+            }
+            *flags = ECF_HASSUBCOMMANDS;
+            return S_OK;
+        }
+
+        IFACEMETHODIMP EnumSubCommands(
+            IEnumExplorerCommand** commands) override
+        {
+            if (commands == nullptr)
+            {
+                return E_POINTER;
+            }
+
+            *commands = new (std::nothrow) ExplorerCommandEnumerator();
+            return *commands == nullptr ? E_OUTOFMEMORY : S_OK;
         }
 
     private:

@@ -1,0 +1,200 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v[0-9]+.[0-9]+.[0-9]+"
+
+permissions:
+  contents: write
+
+env:
+  SOLUTION: CopyShell.sln
+  CONFIGURATION: Release
+  PLATFORM: x64
+  RUNTIME_IDENTIFIER: win-x64
+  DOTNET_CLI_TELEMETRY_OPTOUT: "1"
+  DOTNET_NOLOGO: "1"
+
+jobs:
+  release:
+    name: Sign and publish Windows x64
+    runs-on: windows-2022
+    timeout-minutes: 40
+    environment: release
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Validate release inputs
+        id: version
+        shell: pwsh
+        env:
+          CERTIFICATE: ${{ secrets.COPYSHELL_SIGNING_CERT_BASE64 }}
+          CERTIFICATE_PASSWORD: ${{ secrets.COPYSHELL_SIGNING_CERT_PASSWORD }}
+          CERTIFICATE_PUBLISHER: ${{ secrets.COPYSHELL_CERT_PUBLISHER }}
+        run: |
+          $tag = "${{ github.ref_name }}"
+          if ($tag -notmatch '^v(\d+)\.(\d+)\.(\d+)$') {
+            throw "发布标签必须采用 v主版本.次版本.修订号 格式。"
+          }
+          if (-not $env:CERTIFICATE -or
+              -not $env:CERTIFICATE_PASSWORD -or
+              -not $env:CERTIFICATE_PUBLISHER) {
+            throw "release 环境缺少 CopyShell 代码签名密钥。"
+          }
+          $version = "$($Matches[1]).$($Matches[2]).$($Matches[3]).0"
+          "package_version=$version" |
+            Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+
+      - name: Setup .NET SDK
+        uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Setup MSBuild
+        uses: microsoft/setup-msbuild@v3
+        with:
+          msbuild-architecture: x64
+
+      - name: Restore and build
+        shell: pwsh
+        run: |
+          msbuild $env:SOLUTION `
+            /m `
+            /t:Restore,Build `
+            /p:Configuration=$env:CONFIGURATION `
+            /p:Platform=$env:PLATFORM `
+            /p:ContinuousIntegrationBuild=true
+          if ($LASTEXITCODE -ne 0) {
+            exit $LASTEXITCODE
+          }
+
+      - name: Run managed tests
+        shell: pwsh
+        run: |
+          New-Item `
+            -ItemType Directory `
+            -Path "artifacts\test-results" `
+            -Force | Out-Null
+          $testProjects = Get-ChildItem `
+            -Path "tests" `
+            -Recurse `
+            -Filter "*.Tests.csproj"
+          foreach ($project in $testProjects) {
+            dotnet test $project.FullName `
+              --configuration $env:CONFIGURATION `
+              --no-restore `
+              --logger "trx" `
+              --results-directory "artifacts\test-results"
+            if ($LASTEXITCODE -ne 0) {
+              exit $LASTEXITCODE
+            }
+          }
+
+      - name: Publish application and Shell Extension
+        shell: pwsh
+        run: |
+          $publish = "artifacts\publish\$env:RUNTIME_IDENTIFIER"
+          dotnet publish "src\CopyShell.App\CopyShell.App.csproj" `
+            --configuration $env:CONFIGURATION `
+            --runtime $env:RUNTIME_IDENTIFIER `
+            --self-contained true `
+            --output $publish
+          if ($LASTEXITCODE -ne 0) {
+            exit $LASTEXITCODE
+          }
+
+          $shellOutput = Join-Path `
+            $env:GITHUB_WORKSPACE `
+            "artifacts\shell\$env:RUNTIME_IDENTIFIER\"
+          msbuild "src\CopyShell.ShellExtension\CopyShell.ShellExtension.vcxproj" `
+            /m `
+            /t:Build `
+            /p:Configuration=$env:CONFIGURATION `
+            /p:Platform=$env:PLATFORM `
+            "/p:OutDir=$shellOutput"
+          if ($LASTEXITCODE -ne 0) {
+            exit $LASTEXITCODE
+          }
+
+          Copy-Item `
+            -LiteralPath (Join-Path $shellOutput "CopyShell.ShellExtension.dll") `
+            -Destination $publish `
+            -Force
+          Copy-Item `
+            -Path "installer\CopyShell.Installer\*.ps1" `
+            -Destination $publish `
+            -Force
+          Copy-Item -LiteralPath "LICENSE" -Destination $publish -Force
+          Copy-Item -LiteralPath "README.md" -Destination $publish -Force
+
+      - name: Sign CopyShell binaries
+        shell: pwsh
+        env:
+          CERTIFICATE: ${{ secrets.COPYSHELL_SIGNING_CERT_BASE64 }}
+          CERTIFICATE_PASSWORD: ${{ secrets.COPYSHELL_SIGNING_CERT_PASSWORD }}
+        run: |
+          $publish = "artifacts\publish\$env:RUNTIME_IDENTIFIER"
+          & "installer\CopyShell.Identity\Sign-CopyShellArtifacts.ps1" `
+            -Files @(
+              (Join-Path $publish "CopyShell.App.exe"),
+              (Join-Path $publish "CopyShell.ShellExtension.dll")
+            ) `
+            -SigningCertificateBase64 $env:CERTIFICATE `
+            -SigningCertificatePassword $env:CERTIFICATE_PASSWORD
+
+      - name: Build signed MSIX and update manifest
+        shell: pwsh
+        env:
+          CERTIFICATE: ${{ secrets.COPYSHELL_SIGNING_CERT_BASE64 }}
+          CERTIFICATE_PASSWORD: ${{ secrets.COPYSHELL_SIGNING_CERT_PASSWORD }}
+          CERTIFICATE_PUBLISHER: ${{ secrets.COPYSHELL_CERT_PUBLISHER }}
+        run: |
+          $baseUri = "https://github.com/${{ github.repository }}/releases/latest/download"
+          & "installer\CopyShell.Identity\New-CopyShellPackage.ps1" `
+            -PublishDirectory "artifacts\publish\$env:RUNTIME_IDENTIFIER" `
+            -ShellExtension "artifacts\publish\$env:RUNTIME_IDENTIFIER\CopyShell.ShellExtension.dll" `
+            -OutputDirectory "artifacts\release" `
+            -Version "${{ steps.version.outputs.package_version }}" `
+            -Publisher $env:CERTIFICATE_PUBLISHER `
+            -SigningCertificateBase64 $env:CERTIFICATE `
+            -SigningCertificatePassword $env:CERTIFICATE_PASSWORD `
+            -AppInstallerUri "$baseUri/CopyShell.appinstaller" `
+            -PackageUri "$baseUri/CopyShell-x64.msix"
+
+      - name: Build Portable package and checksums
+        shell: pwsh
+        run: |
+          $release = "artifacts\release"
+          Compress-Archive `
+            -Path "artifacts\publish\$env:RUNTIME_IDENTIFIER\*" `
+            -DestinationPath (Join-Path $release "CopyShell-portable-x64.zip") `
+            -CompressionLevel Optimal
+          $files = @(
+            (Join-Path $release "CopyShell-x64.msix"),
+            (Join-Path $release "CopyShell.appinstaller"),
+            (Join-Path $release "CopyShell-portable-x64.zip")
+          )
+          $lines = foreach ($file in $files) {
+            $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $file).Hash.ToLowerInvariant()
+            "$hash  $([IO.Path]::GetFileName($file))"
+          }
+          $lines | Set-Content `
+            -LiteralPath (Join-Path $release "SHA256SUMS.txt") `
+            -Encoding ascii
+
+      - name: Publish GitHub release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${{ github.ref_name }}" `
+            "artifacts\release\CopyShell-x64.msix" `
+            "artifacts\release\CopyShell.appinstaller" `
+            "artifacts\release\CopyShell-portable-x64.zip" `
+            "artifacts\release\SHA256SUMS.txt" `
+            --verify-tag `
+            --generate-notes `
+            --title "CopyShell ${{ github.ref_name }}"
