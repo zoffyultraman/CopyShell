@@ -794,12 +794,12 @@ BOOL APIENTRY DllMain(HMODULE module, DWORD reason, LPVOID)
     return TRUE;
 }
 
-extern "C" __declspec(dllexport) HRESULT __stdcall DllCanUnloadNow()
+STDAPI DllCanUnloadNow()
 {
     return g_objectCount.load() == 0 ? S_OK : S_FALSE;
 }
 
-extern "C" __declspec(dllexport) HRESULT __stdcall DllGetClassObject(
+STDAPI DllGetClassObject(
     REFCLSID classId,
     REFIID interfaceId,
     void** object)
@@ -826,7 +826,7 @@ extern "C" __declspec(dllexport) HRESULT __stdcall DllGetClassObject(
     return result;
 }
 
-extern "C" __declspec(dllexport) HRESULT __stdcall DllRegisterServer()
+STDAPI DllRegisterServer()
 {
     const std::wstring modulePath = GetModulePath();
     if (modulePath.empty())
@@ -887,7 +887,7 @@ extern "C" __declspec(dllexport) HRESULT __stdcall DllRegisterServer()
     return S_OK;
 }
 
-extern "C" __declspec(dllexport) HRESULT __stdcall DllUnregisterServer()
+STDAPI DllUnregisterServer()
 {
     DeleteRegistryTree(
         HKEY_CURRENT_USER,
