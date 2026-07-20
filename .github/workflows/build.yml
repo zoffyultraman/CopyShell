@@ -259,7 +259,12 @@ jobs:
               $env:LOCALAPPDATA `
               "CopyShell\Logs\App\$([DateTimeOffset]::UtcNow.ToString('yyyy-MM')).log"
             if (Test-Path -LiteralPath $log) {
-              Get-Content -LiteralPath $log | Write-Host
+              $diagnostics = Get-Content -LiteralPath $log -Raw
+              $annotation = $diagnostics `
+                -replace "%", "%25" `
+                -replace "`r", "%0D" `
+                -replace "`n", "%0A"
+              Write-Output "::error title=Application health check::$annotation"
             }
             throw "Application health check failed: $exitCode"
           }
