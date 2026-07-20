@@ -3,7 +3,7 @@ using CopyShell.Core.Services;
 
 namespace CopyShell.App;
 
-internal sealed class BackgroundWorkerLauncher
+public sealed class BackgroundWorkerLauncher
 {
     private readonly string _workerPath;
 
