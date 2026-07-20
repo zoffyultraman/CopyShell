@@ -201,7 +201,7 @@ public partial class App : Application
             Environment.GetEnvironmentVariable(
                 "COPYSHELL_HEALTH_CHECK_STAGE"),
             out stage) &&
-        stage is >= 0 and <= 5;
+        stage is >= 0 and <= 6;
 
     private static string? FindRequestPath(IReadOnlyList<string> arguments)
     {

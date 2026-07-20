@@ -85,6 +85,10 @@ internal sealed class HealthCheckWindow : Window
             {
                 IsIndeterminate = true
             });
+        }
+
+        if (stage >= 5)
+        {
             content.Children.Add(new TextBox
             {
                 AcceptsReturn = true,
@@ -93,7 +97,7 @@ internal sealed class HealthCheckWindow : Window
             });
         }
 
-        if (stage >= 5)
+        if (stage >= 6)
         {
             var queue = new ListView
             {
