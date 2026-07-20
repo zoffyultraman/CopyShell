@@ -19,6 +19,8 @@ public sealed class MainWindow : Window
 {
     private const int MaximumLogCharacters = 250_000;
 
+    public event EventHandler? InterfaceLoaded;
+
     private Grid RootGrid = null!;
     private TextBlock OperationTitle = null!;
     private TextBlock OperationDescription = null!;
@@ -73,6 +75,7 @@ public sealed class MainWindow : Window
     {
         AppDiagnostics.Write("MainWindow programmatic initialization started.");
         RootGrid = new Grid();
+        RootGrid.Loaded += OnRootGridLoaded;
         Content = RootGrid;
         BuildInterface();
         DestinationBox.TextChanged += OnDestinationChanged;
@@ -112,6 +115,13 @@ public sealed class MainWindow : Window
 
         UpdateStartButton();
         _ = RefreshQueueAsync();
+    }
+
+    private void OnRootGridLoaded(object sender, RoutedEventArgs e)
+    {
+        RootGrid.Loaded -= OnRootGridLoaded;
+        AppDiagnostics.Write("Main window interface loaded.");
+        InterfaceLoaded?.Invoke(this, EventArgs.Empty);
     }
 
     private void BuildInterface()

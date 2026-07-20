@@ -8,6 +8,9 @@ namespace CopyShell.App;
 
 public partial class App : Application
 {
+    private static readonly TimeSpan HealthCheckRenderDelay =
+        TimeSpan.FromSeconds(3);
+
     private Window? _window;
 
     public App()
@@ -110,25 +113,24 @@ public partial class App : Application
         try
         {
             AppDiagnostics.Write("Main window creation started.");
-            _window = new MainWindow(
+            var mainWindow = new MainWindow(
                 request,
                 recovery,
                 queueStore,
                 workerLauncher,
                 startupMessage,
                 startupMessageIsError);
+            var isHealthCheck = HasArgument(
+                Environment.GetCommandLineArgs(),
+                "--health-check");
+            if (isHealthCheck)
+            {
+                mainWindow.InterfaceLoaded += OnHealthCheckInterfaceLoaded;
+            }
+
+            _window = mainWindow;
             _window.Activate();
             AppDiagnostics.Write("Main window activated.");
-
-            if (HasArgument(
-                    Environment.GetCommandLineArgs(),
-                    "--health-check"))
-            {
-                AppDiagnostics.Write("Application health check succeeded.");
-                Environment.ExitCode = 0;
-                Exit();
-                return;
-            }
         }
         catch (Exception exception)
         {
@@ -147,6 +149,34 @@ public partial class App : Application
             ShowFatalStartupError(exception);
             Environment.Exit(1);
         }
+    }
+
+    private async void OnHealthCheckInterfaceLoaded(
+        object? sender,
+        EventArgs args)
+    {
+        if (sender is MainWindow mainWindow)
+        {
+            mainWindow.InterfaceLoaded -= OnHealthCheckInterfaceLoaded;
+        }
+
+        try
+        {
+            AppDiagnostics.Write(
+                "Application health check is observing the rendered interface.");
+            await Task.Delay(HealthCheckRenderDelay);
+            AppDiagnostics.Write("Application health check succeeded.");
+            Environment.ExitCode = 0;
+        }
+        catch (Exception exception)
+        {
+            AppDiagnostics.WriteException(
+                "Application health check failed after interface load",
+                exception);
+            Environment.ExitCode = 1;
+        }
+
+        Exit();
     }
 
     private static string? FindRequestPath(IReadOnlyList<string> arguments)
