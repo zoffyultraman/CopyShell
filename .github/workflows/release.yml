@@ -120,11 +120,17 @@ jobs:
         shell: pwsh
         run: |
           $publish = "artifacts\publish\$env:RUNTIME_IDENTIFIER"
-          dotnet publish "src\CopyShell.App\CopyShell.App.csproj" `
-            --configuration $env:CONFIGURATION `
-            --runtime $env:RUNTIME_IDENTIFIER `
-            --self-contained true `
-            --output $publish
+          $publishDirectory = Join-Path `
+            $env:GITHUB_WORKSPACE `
+            "$publish\"
+          msbuild "src\CopyShell.App\CopyShell.App.csproj" `
+            /m `
+            /t:Publish `
+            /p:Configuration=$env:CONFIGURATION `
+            /p:Platform=$env:PLATFORM `
+            /p:RuntimeIdentifier=$env:RUNTIME_IDENTIFIER `
+            /p:SelfContained=true `
+            "/p:PublishDir=$publishDirectory"
           if ($LASTEXITCODE -ne 0) {
             exit $LASTEXITCODE
           }
@@ -132,7 +138,7 @@ jobs:
             --configuration $env:CONFIGURATION `
             --runtime $env:RUNTIME_IDENTIFIER `
             --self-contained true `
-            --output $publish
+            --output $publishDirectory
           if ($LASTEXITCODE -ne 0) {
             exit $LASTEXITCODE
           }

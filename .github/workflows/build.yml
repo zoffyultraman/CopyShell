@@ -148,11 +148,17 @@ jobs:
             throw "Expected application project was not found: $appProject"
           }
 
-          dotnet publish $appProject `
-            --configuration $env:CONFIGURATION `
-            --runtime $env:RUNTIME_IDENTIFIER `
-            --self-contained true `
-            --output "artifacts\publish\$env:RUNTIME_IDENTIFIER"
+          $publishDirectory = Join-Path `
+            $env:GITHUB_WORKSPACE `
+            "artifacts\publish\$env:RUNTIME_IDENTIFIER\"
+          msbuild $appProject `
+            /m `
+            /t:Publish `
+            /p:Configuration=$env:CONFIGURATION `
+            /p:Platform=$env:PLATFORM `
+            /p:RuntimeIdentifier=$env:RUNTIME_IDENTIFIER `
+            /p:SelfContained=true `
+            "/p:PublishDir=$publishDirectory"
           if ($LASTEXITCODE -ne 0) {
             exit $LASTEXITCODE
           }
@@ -161,7 +167,7 @@ jobs:
             --configuration $env:CONFIGURATION `
             --runtime $env:RUNTIME_IDENTIFIER `
             --self-contained true `
-            --output "artifacts\publish\$env:RUNTIME_IDENTIFIER"
+            --output $publishDirectory
           if ($LASTEXITCODE -ne 0) {
             exit $LASTEXITCODE
           }
