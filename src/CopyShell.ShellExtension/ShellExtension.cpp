@@ -2,6 +2,7 @@
 #include <shellapi.h>
 #include <shlobj.h>
 #include <shobjidl.h>
+#include <shlwapi.h>
 #include <strsafe.h>
 
 #include <array>
