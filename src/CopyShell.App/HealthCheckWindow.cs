@@ -81,14 +81,6 @@ internal sealed class HealthCheckWindow : Window
 
         if (stage >= 4)
         {
-            content.Children.Add(new ProgressBar
-            {
-                IsIndeterminate = true
-            });
-        }
-
-        if (stage >= 5)
-        {
             content.Children.Add(new TextBox
             {
                 AcceptsReturn = true,
@@ -97,7 +89,7 @@ internal sealed class HealthCheckWindow : Window
             });
         }
 
-        if (stage >= 6)
+        if (stage >= 5)
         {
             var queue = new ListView
             {

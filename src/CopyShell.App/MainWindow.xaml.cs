@@ -36,7 +36,7 @@ public sealed class MainWindow : Window
     private CheckBox RestartableCheckBox = null!;
     private CheckBox ExcludeJunctionsCheckBox = null!;
     private StackPanel ProgressArea = null!;
-    private ProgressBar TaskProgress = null!;
+    private TextBlock TaskProgressText = null!;
     private TextBlock StatusText = null!;
     private TextBlock ProgressDetailsText = null!;
     private StackPanel LogArea = null!;
@@ -282,9 +282,9 @@ public sealed class MainWindow : Window
             Spacing = 8,
             Visibility = Visibility.Collapsed
         };
-        TaskProgress = new ProgressBar
+        TaskProgressText = new TextBlock
         {
-            IsIndeterminate = true
+            Text = "等待开始"
         };
         StatusText = new TextBlock
         {
@@ -294,7 +294,7 @@ public sealed class MainWindow : Window
         {
             Visibility = Visibility.Collapsed
         };
-        ProgressArea.Children.Add(TaskProgress);
+        ProgressArea.Children.Add(TaskProgressText);
         ProgressArea.Children.Add(StatusText);
         ProgressArea.Children.Add(ProgressDetailsText);
         content.Children.Add(ProgressArea);
@@ -524,8 +524,7 @@ public sealed class MainWindow : Window
                 workerError = exception.Message;
             }
 
-            TaskProgress.IsIndeterminate = false;
-            TaskProgress.Value = 100;
+            TaskProgressText.Text = "100%";
             StatusText.Text = workerError is null
                 ? "任务已加入队列，后台进程将按顺序执行。"
                 : "任务已加入队列，但后台进程未能启动。";
@@ -540,15 +539,13 @@ public sealed class MainWindow : Window
         }
         catch (OperationCanceledException)
         {
-            TaskProgress.IsIndeterminate = false;
-            TaskProgress.Value = 0;
+            TaskProgressText.Text = "0%";
             StatusText.Text = "已取消任务准备。";
             AppendLog("[CopyShell] 已取消任务准备。");
         }
         catch (Exception exception)
         {
-            TaskProgress.IsIndeterminate = false;
-            TaskProgress.Value = 0;
+            TaskProgressText.Text = "0%";
             StatusText.Text = "任务入队失败。";
             AppendLog($"[CopyShell] {exception}");
             await ShowMessageAsync("无法加入队列", exception.Message);
@@ -680,8 +677,7 @@ public sealed class MainWindow : Window
         ProgressArea.Visibility = Visibility.Visible;
         LogArea.Visibility = Visibility.Visible;
         LogBox.Text = string.Empty;
-        TaskProgress.IsIndeterminate = true;
-        TaskProgress.Value = 0;
+        TaskProgressText.Text = "准备中…";
         StatusText.Text = "正在准备任务…";
         ProgressDetailsText.Visibility = Visibility.Collapsed;
     }
@@ -936,11 +932,11 @@ public sealed class MainWindow : Window
 
         if (progress.TotalBytes is > 0 && progress.BytesCompleted is { } completed)
         {
-            TaskProgress.IsIndeterminate = false;
-            TaskProgress.Value = Math.Clamp(
+            var percentage = Math.Clamp(
                 completed * 100d / progress.TotalBytes.Value,
                 0,
                 100);
+            TaskProgressText.Text = $"{percentage:F1}%";
             ProgressDetailsText.Text =
                 $"{FormatBytes(completed)} / {FormatBytes(progress.TotalBytes.Value)}" +
                 FormatPerformance(progress);
@@ -948,7 +944,7 @@ public sealed class MainWindow : Window
         }
         else
         {
-            TaskProgress.IsIndeterminate = true;
+            TaskProgressText.Text = "进行中…";
             ProgressDetailsText.Visibility = Visibility.Collapsed;
         }
 
