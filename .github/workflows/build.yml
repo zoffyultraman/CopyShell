@@ -637,9 +637,7 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: CopyShell-${{ env.RUNTIME_IDENTIFIER }}-full
-          path: |
-            artifacts/publish/${{ env.RUNTIME_IDENTIFIER }}/full/
-            artifacts/package/CopyShell-x64.msix
+          path: artifacts/publish/${{ env.RUNTIME_IDENTIFIER }}/full/
           if-no-files-found: error
           retention-days: 14
 
