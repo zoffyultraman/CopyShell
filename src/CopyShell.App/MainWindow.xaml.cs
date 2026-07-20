@@ -22,20 +22,22 @@ public sealed class MainWindow : Window
     private Grid RootGrid = null!;
     private TextBlock OperationTitle = null!;
     private TextBlock OperationDescription = null!;
-    private InfoBar StartupInfo = null!;
-    private InfoBar SyncWarning = null!;
+    private StackPanel StartupInfo = null!;
+    private TextBlock StartupInfoTitle = null!;
+    private TextBlock StartupInfoMessage = null!;
+    private StackPanel SyncWarning = null!;
     private ListView SourceList = null!;
     private TextBox DestinationBox = null!;
     private ComboBox ConflictStrategyBox = null!;
-    private NumberBox ThreadCountBox = null!;
-    private NumberBox RetryCountBox = null!;
+    private TextBox ThreadCountBox = null!;
+    private TextBox RetryCountBox = null!;
     private CheckBox RestartableCheckBox = null!;
     private CheckBox ExcludeJunctionsCheckBox = null!;
     private StackPanel ProgressArea = null!;
     private ProgressBar TaskProgress = null!;
     private TextBlock StatusText = null!;
     private TextBlock ProgressDetailsText = null!;
-    private Expander LogExpander = null!;
+    private StackPanel LogArea = null!;
     private TextBox LogBox = null!;
     private ListView QueueList = null!;
     private Button PauseQueueButton = null!;
@@ -97,12 +99,9 @@ public sealed class MainWindow : Window
 
         if (!string.IsNullOrWhiteSpace(startupMessage))
         {
-            StartupInfo.Title = startupMessageIsError ? "无法创建任务" : "任务恢复";
-            StartupInfo.Severity = startupMessageIsError
-                ? InfoBarSeverity.Error
-                : InfoBarSeverity.Warning;
-            StartupInfo.Message = startupMessage;
-            StartupInfo.IsOpen = true;
+            ShowStartupInfo(
+                startupMessageIsError ? "无法创建任务" : "任务恢复",
+                startupMessage);
         }
 
         _queueRefreshTimer = DispatcherQueue.CreateTimer();
@@ -154,16 +153,37 @@ public sealed class MainWindow : Window
         content.Children.Add(OperationDescription);
 
         AppDiagnostics.Write("Building status controls.");
-        StartupInfo = new InfoBar
+        StartupInfoTitle = new TextBlock
         {
-            IsClosable = false,
-            IsOpen = false
+            FontWeight = FontWeights.SemiBold
         };
-        SyncWarning = new InfoBar
+        StartupInfoMessage = new TextBlock
         {
-            IsClosable = false,
-            IsOpen = false
+            TextWrapping = TextWrapping.Wrap
         };
+        StartupInfo = new StackPanel
+        {
+            Spacing = 4,
+            Visibility = Visibility.Collapsed
+        };
+        StartupInfo.Children.Add(StartupInfoTitle);
+        StartupInfo.Children.Add(StartupInfoMessage);
+
+        SyncWarning = new StackPanel
+        {
+            Spacing = 4,
+            Visibility = Visibility.Collapsed
+        };
+        SyncWarning.Children.Add(new TextBlock
+        {
+            FontWeight = FontWeights.SemiBold,
+            Text = "镜像同步会删除目标中的多余项目"
+        });
+        SyncWarning.Children.Add(new TextBlock
+        {
+            Text = "开始前会显示变更预览，并要求再次确认。",
+            TextWrapping = TextWrapping.Wrap
+        });
         content.Children.Add(StartupInfo);
         content.Children.Add(SyncWarning);
 
@@ -221,19 +241,15 @@ public sealed class MainWindow : Window
         ConflictStrategyBox.SelectedIndex = 0;
         content.Children.Add(ConflictStrategyBox);
 
-        ThreadCountBox = new NumberBox
+        ThreadCountBox = new TextBox
         {
             Header = "并行线程数",
-            Maximum = 128,
-            Minimum = 1,
-            Value = 16
+            Text = "16"
         };
-        RetryCountBox = new NumberBox
+        RetryCountBox = new TextBox
         {
             Header = "失败重试次数",
-            Maximum = 100,
-            Minimum = 0,
-            Value = 2
+            Text = "2"
         };
         RestartableCheckBox = new CheckBox
         {
@@ -278,13 +294,18 @@ public sealed class MainWindow : Window
             AcceptsReturn = true,
             IsReadOnly = true
         };
-        LogExpander = new Expander
+        LogArea = new StackPanel
         {
-            Header = "执行日志",
-            Content = LogBox,
+            Spacing = 4,
             Visibility = Visibility.Collapsed
         };
-        content.Children.Add(LogExpander);
+        LogArea.Children.Add(new TextBlock
+        {
+            FontWeight = FontWeights.SemiBold,
+            Text = "执行日志"
+        });
+        LogArea.Children.Add(LogBox);
+        content.Children.Add(LogArea);
 
         AppDiagnostics.Write("Building queue controls.");
         content.Children.Add(new TextBlock
@@ -412,7 +433,9 @@ public sealed class MainWindow : Window
             _ => throw new ArgumentOutOfRangeException(nameof(operation))
         };
 
-        SyncWarning.IsOpen = operation == CopyOperation.Sync;
+        SyncWarning.Visibility = operation == CopyOperation.Sync
+            ? Visibility.Visible
+            : Visibility.Collapsed;
         ConflictStrategyBox.IsEnabled = operation != CopyOperation.Sync;
     }
 
@@ -533,14 +556,26 @@ public sealed class MainWindow : Window
         _cancellation?.Cancel();
     }
 
+    private void ShowStartupInfo(string title, string message)
+    {
+        StartupInfoTitle.Text = title;
+        StartupInfoMessage.Text = message;
+        StartupInfo.Visibility = Visibility.Visible;
+    }
+
+    private static int ParseInteger(
+        string value,
+        int fallback,
+        int minimum,
+        int maximum) =>
+        int.TryParse(value, out var parsed)
+            ? Math.Clamp(parsed, minimum, maximum)
+            : fallback;
+
     private CopyOptions CreateOptions() => new()
     {
-        ThreadCount = double.IsNaN(ThreadCountBox.Value)
-            ? 16
-            : (int)ThreadCountBox.Value,
-        RetryCount = double.IsNaN(RetryCountBox.Value)
-            ? 2
-            : (int)RetryCountBox.Value,
+        ThreadCount = ParseInteger(ThreadCountBox.Text, 16, 1, 128),
+        RetryCount = ParseInteger(RetryCountBox.Text, 2, 0, 100),
         Restartable = RestartableCheckBox.IsChecked == true,
         ExcludeJunctions = ExcludeJunctionsCheckBox.IsChecked == true,
         ConflictStrategy = ConflictStrategyBox.SelectedIndex switch
@@ -633,7 +668,7 @@ public sealed class MainWindow : Window
         ExcludeJunctionsCheckBox.IsEnabled = false;
         ConflictStrategyBox.IsEnabled = false;
         ProgressArea.Visibility = Visibility.Visible;
-        LogExpander.Visibility = Visibility.Visible;
+        LogArea.Visibility = Visibility.Visible;
         LogBox.Text = string.Empty;
         TaskProgress.IsIndeterminate = true;
         TaskProgress.Value = 0;
@@ -680,8 +715,8 @@ public sealed class MainWindow : Window
     private void LoadRecovery(CopyTask task)
     {
         DestinationBox.Text = task.Destination;
-        ThreadCountBox.Value = task.Options.ThreadCount;
-        RetryCountBox.Value = task.Options.RetryCount;
+        ThreadCountBox.Text = task.Options.ThreadCount.ToString();
+        RetryCountBox.Text = task.Options.RetryCount.ToString();
         RestartableCheckBox.IsChecked = task.Options.Restartable;
         ExcludeJunctionsCheckBox.IsChecked = task.Options.ExcludeJunctions;
         ConflictStrategyBox.SelectedIndex = task.Options.ConflictStrategy switch
@@ -852,10 +887,7 @@ public sealed class MainWindow : Window
         }
         catch (Exception exception)
         {
-            StartupInfo.Title = "无法读取任务队列";
-            StartupInfo.Severity = InfoBarSeverity.Error;
-            StartupInfo.Message = exception.Message;
-            StartupInfo.IsOpen = true;
+            ShowStartupInfo("无法读取任务队列", exception.Message);
         }
         finally
         {
@@ -889,7 +921,7 @@ public sealed class MainWindow : Window
         bool appendLog = true)
     {
         ProgressArea.Visibility = Visibility.Visible;
-        LogExpander.Visibility = Visibility.Visible;
+        LogArea.Visibility = Visibility.Visible;
         StatusText.Text = progress.Message;
 
         if (progress.TotalBytes is > 0 && progress.BytesCompleted is { } completed)
