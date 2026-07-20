@@ -41,7 +41,9 @@ public sealed partial class MainWindow : Window
         string? startupMessage,
         bool startupMessageIsError)
     {
+        AppDiagnostics.Write("MainWindow.InitializeComponent started.");
         InitializeComponent();
+        AppDiagnostics.Write("MainWindow.InitializeComponent completed.");
         _queueStore = queueStore;
         _workerLauncher = workerLauncher;
         _hasTaskContext = request is not null || recovery is not null;
@@ -84,10 +86,27 @@ public sealed partial class MainWindow : Window
 
     private void ConfigureWindow()
     {
-        Title = "CopyShell";
-        var windowHandle = WindowNative.GetWindowHandle(this);
-        var windowId = Win32Interop.GetWindowIdFromWindow(windowHandle);
-        AppWindow.GetFromWindowId(windowId).Resize(new SizeInt32(780, 900));
+        try
+        {
+            Title = "CopyShell";
+            var windowHandle = WindowNative.GetWindowHandle(this);
+            var windowId = Win32Interop.GetWindowIdFromWindow(windowHandle);
+            var appWindow = AppWindow.GetFromWindowId(windowId);
+            if (appWindow is null)
+            {
+                AppDiagnostics.Write(
+                    "AppWindow lookup returned null; default size will be used.");
+                return;
+            }
+
+            appWindow.Resize(new SizeInt32(780, 900));
+        }
+        catch (Exception exception)
+        {
+            AppDiagnostics.WriteException(
+                "Window sizing failed; default size will be used",
+                exception);
+        }
     }
 
     private void ConfigureOperation(CopyOperation operation)

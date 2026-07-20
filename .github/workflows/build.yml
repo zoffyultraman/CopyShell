@@ -229,6 +229,41 @@ jobs:
             throw "Background Worker health check failed: $exitCode"
           }
 
+      - name: Smoke test application startup
+        if: steps.solution.outputs.exists == 'true'
+        shell: pwsh
+        run: |
+          $application = Join-Path `
+            $env:GITHUB_WORKSPACE `
+            "artifacts\publish\$env:RUNTIME_IDENTIFIER\CopyShell.App.exe"
+          if (-not (Test-Path -LiteralPath $application)) {
+            throw "Application output was not found: $application"
+          }
+
+          $startInfo = [System.Diagnostics.ProcessStartInfo]::new()
+          $startInfo.FileName = $application
+          $startInfo.WorkingDirectory = Split-Path -Parent $application
+          $startInfo.UseShellExecute = $false
+          $startInfo.ArgumentList.Add("--health-check")
+          $process = [System.Diagnostics.Process]::Start($startInfo)
+          if (-not $process.WaitForExit(20000)) {
+            $process.Kill($true)
+            $process.Dispose()
+            throw "Application health check timed out."
+          }
+
+          $exitCode = $process.ExitCode
+          $process.Dispose()
+          if ($exitCode -ne 0) {
+            $log = Join-Path `
+              $env:LOCALAPPDATA `
+              "CopyShell\Logs\App\$([DateTimeOffset]::UtcNow.ToString('yyyy-MM')).log"
+            if (Test-Path -LiteralPath $log) {
+              Get-Content -LiteralPath $log | Write-Host
+            }
+            throw "Application health check failed: $exitCode"
+          }
+
       - name: Smoke test Shell Extension
         if: steps.solution.outputs.exists == 'true'
         shell: pwsh

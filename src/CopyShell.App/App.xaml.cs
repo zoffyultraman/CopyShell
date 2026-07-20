@@ -2,6 +2,7 @@ using CopyShell.Core.Protocol;
 using CopyShell.Core.Models;
 using CopyShell.Core.Services;
 using Microsoft.UI.Xaml;
+using System.Runtime.InteropServices;
 
 namespace CopyShell.App;
 
@@ -11,11 +12,33 @@ public partial class App : Application
 
     public App()
     {
-        InitializeComponent();
+        UnhandledException += OnUnhandledException;
+        try
+        {
+            AppDiagnostics.Write(
+                $"Application initialization started. " +
+                $"OS={Environment.OSVersion}; BaseDirectory={AppContext.BaseDirectory}");
+            InitializeComponent();
+            AppDiagnostics.Write("Application resources initialized.");
+        }
+        catch (Exception exception)
+        {
+            AppDiagnostics.WriteException(
+                "Application resource initialization failed",
+                exception);
+            if (!HasArgument(
+                    Environment.GetCommandLineArgs(),
+                    "--health-check"))
+            {
+                ShowFatalStartupError(exception);
+            }
+            throw;
+        }
     }
 
     protected override void OnLaunched(LaunchActivatedEventArgs args)
     {
+        AppDiagnostics.Write("Application launch started.");
         ShellRequest? request = null;
         TaskJournalEntry? recovery = null;
         string? startupMessage = null;
@@ -84,14 +107,42 @@ public partial class App : Application
             startupMessageIsError = true;
         }
 
-        _window = new MainWindow(
-            request,
-            recovery,
-            queueStore,
-            workerLauncher,
-            startupMessage,
-            startupMessageIsError);
-        _window.Activate();
+        try
+        {
+            AppDiagnostics.Write("Main window creation started.");
+            _window = new MainWindow(
+                request,
+                recovery,
+                queueStore,
+                workerLauncher,
+                startupMessage,
+                startupMessageIsError);
+            _window.Activate();
+            AppDiagnostics.Write("Main window activated.");
+
+            if (HasArgument(
+                    Environment.GetCommandLineArgs(),
+                    "--health-check"))
+            {
+                AppDiagnostics.Write("Application health check succeeded.");
+                Environment.Exit(0);
+            }
+        }
+        catch (Exception exception)
+        {
+            AppDiagnostics.WriteException(
+                "Main window creation or activation failed",
+                exception);
+            if (HasArgument(
+                    Environment.GetCommandLineArgs(),
+                    "--health-check"))
+            {
+                Environment.Exit(1);
+            }
+
+            ShowFatalStartupError(exception);
+            Environment.Exit(1);
+        }
     }
 
     private static string? FindRequestPath(IReadOnlyList<string> arguments)
@@ -106,4 +157,43 @@ public partial class App : Application
 
         return null;
     }
+
+    private static bool HasArgument(
+        IReadOnlyList<string> arguments,
+        string expected) =>
+        arguments.Any(
+            argument => argument.Equals(
+                expected,
+                StringComparison.OrdinalIgnoreCase));
+
+    private static void OnUnhandledException(
+        object sender,
+        Microsoft.UI.Xaml.UnhandledExceptionEventArgs args) =>
+        AppDiagnostics.WriteException(
+            "Unhandled WinUI exception",
+            args.Exception);
+
+    private static void ShowFatalStartupError(Exception exception)
+    {
+        var message =
+            "CopyShell could not create its window." +
+            Environment.NewLine +
+            Environment.NewLine +
+            exception.Message +
+            Environment.NewLine +
+            Environment.NewLine +
+            $"Diagnostic log: {AppDiagnostics.CurrentLogPath}";
+        MessageBoxW(
+            IntPtr.Zero,
+            message,
+            "CopyShell startup error",
+            0x00000010);
+    }
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    private static extern int MessageBoxW(
+        IntPtr window,
+        string text,
+        string caption,
+        uint type);
 }
