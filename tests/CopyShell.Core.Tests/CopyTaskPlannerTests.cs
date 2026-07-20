@@ -74,13 +74,13 @@ public sealed class CopyTaskPlannerTests
         var second = Directory.CreateDirectory(Path.Combine(_root, "B")).FullName;
         var destination = Directory.CreateDirectory(Path.Combine(_root, "目标")).FullName;
 
-        Assert.Throws<CopyTaskValidationException>(() =>
+        Assert.Throws<CopyTaskValidationException>((Action)(() =>
         {
             _planner.CreatePlan(CopyTask.Create(
                 CopyOperation.Sync,
                 [first, second],
                 destination));
-        });
+        }));
     }
 
     [Test]
@@ -89,14 +89,14 @@ public sealed class CopyTaskPlannerTests
         var source = Directory.CreateDirectory(Path.Combine(_root, "源")).FullName;
         var destination = Directory.CreateDirectory(Path.Combine(_root, "目标")).FullName;
 
-        Assert.Throws<CopyTaskValidationException>(() =>
+        Assert.Throws<CopyTaskValidationException>((Action)(() =>
         {
             _planner.CreatePlan(CopyTask.Create(
                 CopyOperation.Sync,
                 [source],
                 destination,
                 new CopyOptions { ConflictStrategy = ConflictStrategy.SkipExisting }));
-        });
+        }));
     }
 
     [Test]
@@ -105,13 +105,13 @@ public sealed class CopyTaskPlannerTests
         var source = Directory.CreateDirectory(Path.Combine(_root, "源")).FullName;
         var destination = Directory.CreateDirectory(Path.Combine(source, "目标")).FullName;
 
-        Assert.Throws<CopyTaskValidationException>(() =>
+        Assert.Throws<CopyTaskValidationException>((Action)(() =>
         {
             _planner.CreatePlan(CopyTask.Create(
                 CopyOperation.Copy,
                 [source],
                 destination));
-        });
+        }));
     }
 
     [Test]
@@ -121,13 +121,13 @@ public sealed class CopyTaskPlannerTests
         var destination = Path.Combine(_root, "目标.txt");
         File.WriteAllText(destination, "not a directory");
 
-        Assert.Throws<CopyTaskValidationException>(() =>
+        Assert.Throws<CopyTaskValidationException>((Action)(() =>
         {
             _planner.CreatePlan(CopyTask.Create(
                 CopyOperation.Copy,
                 [source],
                 destination));
-        });
+        }));
     }
 
     [Test]

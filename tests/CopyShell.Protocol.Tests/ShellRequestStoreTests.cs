@@ -71,7 +71,7 @@ public sealed class ShellRequestStoreTests
         var store = new ShellRequestStore(_root, new FixedTimeProvider(_now));
 
         Assert.ThrowsAsync<InvalidDataException>(
-            async () => await store.ReadAndDeleteAsync(path));
+            (AsyncTestDelegate)(async () => await store.ReadAndDeleteAsync(path)));
     }
 
     [Test]
@@ -90,7 +90,7 @@ public sealed class ShellRequestStoreTests
         var store = new ShellRequestStore(_root, new FixedTimeProvider(_now));
 
         Assert.ThrowsAsync<InvalidDataException>(
-            async () => await store.ReadAndDeleteAsync(path));
+            (AsyncTestDelegate)(async () => await store.ReadAndDeleteAsync(path)));
     }
 
     private async Task<string> WriteRequestAsync(ShellRequest request)
