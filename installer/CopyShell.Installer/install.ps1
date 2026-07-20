@@ -8,6 +8,7 @@ $ErrorActionPreference = "Stop"
 $source = (Resolve-Path -LiteralPath $SourceDirectory).Path
 $requiredFiles = @(
     "CopyShell.App.exe",
+    "CopyShell.Worker.exe",
     "CopyShell.ShellExtension.dll"
 )
 

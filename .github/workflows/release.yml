@@ -105,6 +105,14 @@ jobs:
           if ($LASTEXITCODE -ne 0) {
             exit $LASTEXITCODE
           }
+          dotnet publish "src\CopyShell.Worker\CopyShell.Worker.csproj" `
+            --configuration $env:CONFIGURATION `
+            --runtime $env:RUNTIME_IDENTIFIER `
+            --self-contained true `
+            --output $publish
+          if ($LASTEXITCODE -ne 0) {
+            exit $LASTEXITCODE
+          }
 
           $shellOutput = Join-Path `
             $env:GITHUB_WORKSPACE `
@@ -140,6 +148,7 @@ jobs:
           & "installer\CopyShell.Identity\Sign-CopyShellArtifacts.ps1" `
             -Files @(
               (Join-Path $publish "CopyShell.App.exe"),
+              (Join-Path $publish "CopyShell.Worker.exe"),
               (Join-Path $publish "CopyShell.ShellExtension.dll")
             ) `
             -SigningCertificateBase64 $env:CERTIFICATE `

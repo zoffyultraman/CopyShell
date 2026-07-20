@@ -23,11 +23,10 @@ public sealed partial class MainWindow : Window
     private readonly Guid _taskId;
     private readonly ObservableCollection<string> _sources = [];
     private readonly ObservableCollection<QueueTaskViewModel> _queueItems = [];
-    private readonly Dictionary<Guid, CopyProgress> _latestProgress = [];
     private readonly CopyTaskPlanner _planner = new(new PhysicalFileSystemProbe());
     private readonly ISyncPreviewService _previewService = new FileSystemSyncPreviewService();
     private readonly TaskQueueStore _queueStore;
-    private readonly TaskQueueProcessor _processor;
+    private readonly BackgroundWorkerLauncher _workerLauncher;
     private readonly DispatcherQueueTimer _queueRefreshTimer;
     private CancellationTokenSource? _cancellation;
     private bool _isRunning;
@@ -38,13 +37,13 @@ public sealed partial class MainWindow : Window
         ShellRequest? request,
         TaskJournalEntry? recovery,
         TaskQueueStore queueStore,
-        TaskQueueProcessor processor,
+        BackgroundWorkerLauncher workerLauncher,
         string? startupMessage,
         bool startupMessageIsError)
     {
         InitializeComponent();
         _queueStore = queueStore;
-        _processor = processor;
+        _workerLauncher = workerLauncher;
         _hasTaskContext = request is not null || recovery is not null;
         _operation = request?.Operation ?? recovery?.Task.Operation ?? CopyOperation.Copy;
         _taskId = recovery?.Task.TaskId ?? Guid.NewGuid();
@@ -73,9 +72,6 @@ public sealed partial class MainWindow : Window
             StartupInfo.IsOpen = true;
         }
 
-        _processor.TaskChanged += OnQueueTaskChanged;
-        _processor.ProgressChanged += OnQueueProgressChanged;
-        _processor.ProcessorError += OnQueueProcessorError;
         _queueRefreshTimer = DispatcherQueue.CreateTimer();
         _queueRefreshTimer.Interval = TimeSpan.FromSeconds(1);
         _queueRefreshTimer.Tick += OnQueueRefreshTick;
@@ -182,11 +178,29 @@ public sealed partial class MainWindow : Window
                 plan.PlanHash,
                 _cancellation!.Token);
             _draftEnqueued = true;
+            string? workerError = null;
+            try
+            {
+                _workerLauncher.EnsureRunning();
+            }
+            catch (Exception exception)
+            {
+                workerError = exception.Message;
+            }
+
             TaskProgress.IsIndeterminate = false;
             TaskProgress.Value = 100;
-            StatusText.Text = "任务已加入队列，将按顺序执行。";
+            StatusText.Text = workerError is null
+                ? "任务已加入队列，后台进程将按顺序执行。"
+                : "任务已加入队列，但后台进程未能启动。";
             AppendLog($"[CopyShell] 任务已入队：{queued.TaskId:D}");
             await RefreshQueueAsync(queued.TaskId);
+            if (workerError is not null)
+            {
+                await ShowMessageAsync(
+                    "后台进程未启动",
+                    $"{workerError}\n\n任务仍保留在队列中，重新启动 CopyShell 后可以继续。");
+            }
         }
         catch (OperationCanceledException)
         {
@@ -405,7 +419,8 @@ public sealed partial class MainWindow : Window
             await ExecuteQueueActionAsync(
                 selected.TaskId,
                 token => _queueStore.RequestPauseAsync(selected.TaskId, token),
-                "无法暂停任务");
+                "无法暂停任务",
+                wakeWorker: false);
         }
     }
 
@@ -416,7 +431,8 @@ public sealed partial class MainWindow : Window
             await ExecuteQueueActionAsync(
                 selected.TaskId,
                 token => _queueStore.ResumeAsync(selected.TaskId, token),
-                "无法恢复任务");
+                "无法恢复任务",
+                wakeWorker: true);
         }
     }
 
@@ -427,7 +443,8 @@ public sealed partial class MainWindow : Window
             await ExecuteQueueActionAsync(
                 selected.TaskId,
                 token => _queueStore.RetryAsync(selected.TaskId, token),
-                "无法重试任务");
+                "无法重试任务",
+                wakeWorker: true);
         }
     }
 
@@ -438,18 +455,34 @@ public sealed partial class MainWindow : Window
             await ExecuteQueueActionAsync(
                 selected.TaskId,
                 token => _queueStore.RequestCancelAsync(selected.TaskId, token),
-                "无法取消任务");
+                "无法取消任务",
+                wakeWorker: false);
         }
     }
 
     private async Task ExecuteQueueActionAsync(
         Guid taskId,
         Func<CancellationToken, Task<QueueTaskEntry>> action,
-        string errorTitle)
+        string errorTitle,
+        bool wakeWorker)
     {
         try
         {
             var updated = await action(CancellationToken.None);
+            if (wakeWorker && updated.State == QueueTaskState.Pending)
+            {
+                try
+                {
+                    _workerLauncher.EnsureRunning();
+                }
+                catch (Exception exception)
+                {
+                    await ShowMessageAsync(
+                        "后台进程未启动",
+                        $"{exception.Message}\n\n任务已保留在队列中。");
+                }
+            }
+
             await RefreshQueueAsync(updated.TaskId);
         }
         catch (Exception exception)
@@ -468,52 +501,8 @@ public sealed partial class MainWindow : Window
     {
         _queueRefreshTimer.Stop();
         _queueRefreshTimer.Tick -= OnQueueRefreshTick;
-        _processor.TaskChanged -= OnQueueTaskChanged;
-        _processor.ProgressChanged -= OnQueueProgressChanged;
-        _processor.ProcessorError -= OnQueueProcessorError;
         Closed -= OnWindowClosed;
     }
-
-    private void OnQueueTaskChanged(QueueTaskEntry entry) =>
-        DispatcherQueue.TryEnqueue(
-            () =>
-            {
-                if (entry.State is not (
-                        QueueTaskState.Running or
-                        QueueTaskState.PauseRequested or
-                        QueueTaskState.CancelRequested))
-                {
-                    _latestProgress.Remove(entry.TaskId);
-                }
-
-                _ = RefreshQueueAsync();
-            });
-
-    private void OnQueueProgressChanged(Guid taskId, CopyProgress update) =>
-        DispatcherQueue.TryEnqueue(
-            () =>
-            {
-                var merged = MergeProgress(
-                    _latestProgress.GetValueOrDefault(taskId),
-                    update);
-                _latestProgress[taskId] = merged;
-
-                if ((QueueList.SelectedItem as QueueTaskViewModel)?.TaskId == taskId ||
-                    taskId == _taskId)
-                {
-                    DisplayProgress(merged);
-                }
-            });
-
-    private void OnQueueProcessorError(Exception exception) =>
-        DispatcherQueue.TryEnqueue(
-            () =>
-            {
-                StartupInfo.Title = "任务队列暂时不可用";
-                StartupInfo.Severity = InfoBarSeverity.Error;
-                StartupInfo.Message = exception.Message;
-                StartupInfo.IsOpen = true;
-            });
 
     private async Task RefreshQueueAsync(Guid? taskToSelect = null)
     {
@@ -550,6 +539,10 @@ public sealed partial class MainWindow : Window
             {
                 QueueDetailsBox.Text = FormatQueueDetails(selected.Entry);
                 UpdateQueueButtons(selected.Entry);
+                if (GetProgress(selected.Entry) is { } progress)
+                {
+                    DisplayProgress(progress, appendLog: false);
+                }
             }
         }
         catch (Exception exception)
@@ -567,11 +560,6 @@ public sealed partial class MainWindow : Window
 
     private CopyProgress? GetProgress(QueueTaskEntry entry)
     {
-        if (_latestProgress.TryGetValue(entry.TaskId, out var progress))
-        {
-            return progress;
-        }
-
         if (entry.BytesCompleted is null &&
             entry.TotalBytes is null &&
             string.IsNullOrWhiteSpace(entry.CurrentMessage))
@@ -590,20 +578,6 @@ public sealed partial class MainWindow : Window
                 ? TimeSpan.FromSeconds(Math.Max(0, seconds))
                 : null);
     }
-
-    private static CopyProgress MergeProgress(
-        CopyProgress? previous,
-        CopyProgress current) =>
-        previous is null
-            ? current
-            : current with
-            {
-                BytesCompleted = current.BytesCompleted ?? previous.BytesCompleted,
-                TotalBytes = current.TotalBytes ?? previous.TotalBytes,
-                BytesPerSecond = current.BytesPerSecond ?? previous.BytesPerSecond,
-                EstimatedRemaining =
-                    current.EstimatedRemaining ?? previous.EstimatedRemaining
-            };
 
     private void DisplayProgress(
         CopyProgress progress,

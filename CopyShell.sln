@@ -6,6 +6,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "CopyShell.Core", "src\CopyS
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "CopyShell.Robocopy", "src\CopyShell.Robocopy\CopyShell.Robocopy.csproj", "{15484502-B401-41FD-806B-9A0F1325C034}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "CopyShell.Worker", "src\CopyShell.Worker\CopyShell.Worker.csproj", "{CC718706-8E50-4DD8-BFD8-F31C75C6EF4A}"
+EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "CopyShell.App", "src\CopyShell.App\CopyShell.App.csproj", "{1E90DBF9-B146-47D0-995A-273878A5D258}"
 EndProject
 Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "CopyShell.ShellExtension", "src\CopyShell.ShellExtension\CopyShell.ShellExtension.vcxproj", "{FE798952-BE09-455B-8949-FCDF9F82274C}"
@@ -32,6 +34,10 @@ Global
 		{15484502-B401-41FD-806B-9A0F1325C034}.Debug|x64.Build.0 = Debug|x64
 		{15484502-B401-41FD-806B-9A0F1325C034}.Release|x64.ActiveCfg = Release|x64
 		{15484502-B401-41FD-806B-9A0F1325C034}.Release|x64.Build.0 = Release|x64
+		{CC718706-8E50-4DD8-BFD8-F31C75C6EF4A}.Debug|x64.ActiveCfg = Debug|x64
+		{CC718706-8E50-4DD8-BFD8-F31C75C6EF4A}.Debug|x64.Build.0 = Debug|x64
+		{CC718706-8E50-4DD8-BFD8-F31C75C6EF4A}.Release|x64.ActiveCfg = Release|x64
+		{CC718706-8E50-4DD8-BFD8-F31C75C6EF4A}.Release|x64.Build.0 = Release|x64
 		{1E90DBF9-B146-47D0-995A-273878A5D258}.Debug|x64.ActiveCfg = Debug|x64
 		{1E90DBF9-B146-47D0-995A-273878A5D258}.Debug|x64.Build.0 = Debug|x64
 		{1E90DBF9-B146-47D0-995A-273878A5D258}.Release|x64.ActiveCfg = Release|x64

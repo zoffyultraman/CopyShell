@@ -1,7 +1,6 @@
 using CopyShell.Core.Protocol;
 using CopyShell.Core.Models;
 using CopyShell.Core.Services;
-using CopyShell.Robocopy;
 using Microsoft.UI.Xaml;
 
 namespace CopyShell.App;
@@ -9,8 +8,6 @@ namespace CopyShell.App;
 public partial class App : Application
 {
     private Window? _window;
-    private readonly CancellationTokenSource _applicationCancellation = new();
-    private Task? _processorTask;
 
     public App()
     {
@@ -26,11 +23,7 @@ public partial class App : Application
         var journal = new TaskJournalStore();
         var queueStore = new TaskQueueStore();
         var processProbe = new PhysicalProcessProbe();
-        var processor = new TaskQueueProcessor(
-            queueStore,
-            new CopyTaskPlanner(new PhysicalFileSystemProbe()),
-            new RobocopyEngine(new RobocopyCommandFactory()),
-            processProbe);
+        var workerLauncher = new BackgroundWorkerLauncher();
 
         try
         {
@@ -38,6 +31,16 @@ public partial class App : Application
                 .MarkOrphanedRunsInterruptedAsync(processProbe)
                 .GetAwaiter()
                 .GetResult();
+            var hasPendingTasks = queueStore
+                .ListAsync()
+                .GetAwaiter()
+                .GetResult()
+                .Any(entry => entry.State == QueueTaskState.Pending);
+            if (hasPendingTasks)
+            {
+                workerLauncher.EnsureRunning();
+            }
+
             var interruptedCount = journal
                 .MarkOrphanedRunsInterruptedAsync()
                 .GetAwaiter()
@@ -85,12 +88,10 @@ public partial class App : Application
             request,
             recovery,
             queueStore,
-            processor,
+            workerLauncher,
             startupMessage,
             startupMessageIsError);
-        _window.Closed += (_, _) => _applicationCancellation.Cancel();
         _window.Activate();
-        _processorTask = processor.RunAsync(_applicationCancellation.Token);
     }
 
     private static string? FindRequestPath(IReadOnlyList<string> arguments)

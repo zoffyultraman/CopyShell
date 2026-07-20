@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using CopyShell.Core.Abstractions;
 using CopyShell.Core.Models;
 
@@ -34,12 +35,32 @@ public sealed class TaskQueueProcessor
 
     public Task RunAsync(CancellationToken cancellationToken) =>
         Task.Factory.StartNew(
-            () => RunWithOwnership(cancellationToken),
+            () => RunWithOwnership(cancellationToken, idleTimeout: null),
             cancellationToken,
             TaskCreationOptions.LongRunning,
             TaskScheduler.Default);
 
-    private void RunWithOwnership(CancellationToken cancellationToken)
+    public Task RunUntilIdleAsync(
+        TimeSpan idleTimeout,
+        CancellationToken cancellationToken)
+    {
+        if (idleTimeout <= TimeSpan.Zero)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(idleTimeout),
+                "空闲退出时间必须大于零。");
+        }
+
+        return Task.Factory.StartNew(
+            () => RunWithOwnership(cancellationToken, idleTimeout),
+            cancellationToken,
+            TaskCreationOptions.LongRunning,
+            TaskScheduler.Default);
+    }
+
+    private void RunWithOwnership(
+        CancellationToken cancellationToken,
+        TimeSpan? idleTimeout)
     {
         while (!cancellationToken.IsCancellationRequested)
         {
@@ -62,13 +83,22 @@ public sealed class TaskQueueProcessor
 
                 if (!acquired)
                 {
+                    if (idleTimeout is not null)
+                    {
+                        return;
+                    }
+
                     cancellationToken.WaitHandle.WaitOne(TimeSpan.FromSeconds(2));
                     continue;
                 }
 
-                RunOwnerLoopAsync(cancellationToken)
+                RunOwnerLoopAsync(cancellationToken, idleTimeout)
                     .GetAwaiter()
                     .GetResult();
+                if (idleTimeout is not null)
+                {
+                    return;
+                }
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
@@ -77,6 +107,11 @@ public sealed class TaskQueueProcessor
             catch (Exception exception)
             {
                 ProcessorError?.Invoke(exception);
+                if (idleTimeout is not null)
+                {
+                    throw;
+                }
+
                 cancellationToken.WaitHandle.WaitOne(TimeSpan.FromSeconds(2));
             }
             finally
@@ -89,12 +124,15 @@ public sealed class TaskQueueProcessor
         }
     }
 
-    private async Task RunOwnerLoopAsync(CancellationToken cancellationToken)
+    private async Task RunOwnerLoopAsync(
+        CancellationToken cancellationToken,
+        TimeSpan? idleTimeout)
     {
         await _store.MarkOrphanedRunsInterruptedAsync(
             _processProbe,
             cancellationToken).ConfigureAwait(false);
 
+        Stopwatch? idleStopwatch = null;
         while (!cancellationToken.IsCancellationRequested)
         {
             var entry = await _store.TryClaimNextAsync(
@@ -102,10 +140,20 @@ public sealed class TaskQueueProcessor
                 cancellationToken).ConfigureAwait(false);
             if (entry is null)
             {
+                if (idleTimeout is not null)
+                {
+                    idleStopwatch ??= Stopwatch.StartNew();
+                    if (idleStopwatch.Elapsed >= idleTimeout.Value)
+                    {
+                        return;
+                    }
+                }
+
                 await Task.Delay(IdlePollInterval, cancellationToken).ConfigureAwait(false);
                 continue;
             }
 
+            idleStopwatch = null;
             TaskChanged?.Invoke(entry);
             await ExecuteEntryAsync(entry, cancellationToken).ConfigureAwait(false);
         }

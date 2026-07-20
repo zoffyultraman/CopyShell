@@ -133,6 +133,15 @@ jobs:
             exit $LASTEXITCODE
           }
 
+          dotnet publish "src\CopyShell.Worker\CopyShell.Worker.csproj" `
+            --configuration $env:CONFIGURATION `
+            --runtime $env:RUNTIME_IDENTIFIER `
+            --self-contained true `
+            --output "artifacts\publish\$env:RUNTIME_IDENTIFIER"
+          if ($LASTEXITCODE -ne 0) {
+            exit $LASTEXITCODE
+          }
+
       - name: Collect native Shell Extension
         if: steps.solution.outputs.exists == 'true'
         shell: pwsh
@@ -171,6 +180,22 @@ jobs:
             -Force
           Copy-Item -LiteralPath "LICENSE" -Destination $publishDirectory -Force
           Copy-Item -LiteralPath "README.md" -Destination $publishDirectory -Force
+
+      - name: Smoke test background Worker
+        if: steps.solution.outputs.exists == 'true'
+        shell: pwsh
+        run: |
+          $worker = Join-Path `
+            $env:GITHUB_WORKSPACE `
+            "artifacts\publish\$env:RUNTIME_IDENTIFIER\CopyShell.Worker.exe"
+          if (-not (Test-Path -LiteralPath $worker)) {
+            throw "Background Worker output was not found: $worker"
+          }
+
+          & $worker --health-check
+          if ($LASTEXITCODE -ne 0) {
+            throw "Background Worker health check failed: $LASTEXITCODE"
+          }
 
       - name: Smoke test Shell Extension
         if: steps.solution.outputs.exists == 'true'
