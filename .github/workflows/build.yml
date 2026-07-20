@@ -255,7 +255,26 @@ jobs:
           $process = [System.Diagnostics.Process]::Start($startInfo)
           if (-not $process.WaitForExit(20000)) {
             $process.Kill($true)
+            $process.WaitForExit()
             $process.Dispose()
+
+            $log = Join-Path `
+              $env:LOCALAPPDATA `
+              "CopyShell\Logs\App\$([DateTimeOffset]::UtcNow.ToString('yyyy-MM')).log"
+            if (Test-Path -LiteralPath $log) {
+              $diagnostics = Get-Content -LiteralPath $log -Raw
+              $annotation = $diagnostics `
+                -replace "%", "%25" `
+                -replace "`r", "%0D" `
+                -replace "`n", "%0A"
+              Write-Output `
+                "::error title=Application health check timed out::$annotation"
+            }
+            else {
+              Write-Output `
+                "::error title=Application health check timed out::The managed startup log was not created."
+            }
+
             throw "Application health check timed out."
           }
 
