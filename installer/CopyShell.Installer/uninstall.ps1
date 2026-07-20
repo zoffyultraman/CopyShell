@@ -15,7 +15,7 @@ if ($extension -and (Test-Path -LiteralPath $extension)) {
     $regsvr32 = Join-Path $env:SystemRoot "System32\regsvr32.exe"
     & $regsvr32 /s /u $extension
     if ($LASTEXITCODE -ne 0) {
-        throw "Shell Extension 注销失败，退出码：$LASTEXITCODE"
+        throw "Failed to unregister the Shell Extension. Exit code: $LASTEXITCODE"
     }
 }
 else {
@@ -39,7 +39,7 @@ try {
     Remove-Item -LiteralPath $installRoot -Recurse -Force -ErrorAction Stop
 }
 catch {
-    Write-Warning "部分文件仍被 Windows 资源管理器占用。重启资源管理器后请删除：$installRoot"
+    Write-Warning "Some files are still in use. Restart Windows Explorer and remove: $installRoot"
 }
 
-Write-Host "CopyShell 已为当前用户卸载。"
+Write-Host "CopyShell has been uninstalled for the current user."

@@ -15,16 +15,14 @@ $requiredFiles = @(
 foreach ($file in $requiredFiles) {
     $path = Join-Path $source $file
     if (-not (Test-Path -LiteralPath $path)) {
-        throw "缺少安装文件：$path"
+        throw "Required installation file is missing: $path"
     }
 }
 
 $installRoot = Join-Path $env:LOCALAPPDATA "Programs\CopyShell"
-$versionDirectory = Join-Path $installRoot (
-    "app-" +
-    (Get-Date -Format "yyyyMMddHHmmss") +
-    "-" +
-    [Guid]::NewGuid().ToString("N").Substring(0, 8))
+$versionName = "app-" + (Get-Date -Format "yyyyMMddHHmmss")
+$versionName += "-" + [Guid]::NewGuid().ToString("N").Substring(0, 8)
+$versionDirectory = Join-Path $installRoot $versionName
 New-Item -ItemType Directory -Path $versionDirectory -Force | Out-Null
 Copy-Item -Path (Join-Path $source "*") -Destination $versionDirectory -Recurse -Force
 
@@ -38,7 +36,7 @@ if (Test-Path -LiteralPath $classKey) {
 if ($previousExtension -and (Test-Path -LiteralPath $previousExtension)) {
     & $regsvr32 /s /u $previousExtension
     if ($LASTEXITCODE -ne 0) {
-        throw "旧版 Shell Extension 注销失败，退出码：$LASTEXITCODE"
+        throw "Failed to unregister the previous Shell Extension. Exit code: $LASTEXITCODE"
     }
 }
 
@@ -47,32 +45,33 @@ if ($LASTEXITCODE -ne 0) {
     if ($previousExtension -and (Test-Path -LiteralPath $previousExtension)) {
         & $regsvr32 /s $previousExtension
     }
-    throw "Shell Extension 注册失败，退出码：$LASTEXITCODE"
+    throw "Failed to register the Shell Extension. Exit code: $LASTEXITCODE"
 }
 
 $currentFile = Join-Path $installRoot "current.txt"
 $versionDirectory | Set-Content -LiteralPath $currentFile -Encoding utf8
 
-Get-ChildItem -LiteralPath $installRoot -Directory -Filter "app-*" |
-    Where-Object {
-        $_.FullName -ne $versionDirectory
-    } |
-    ForEach-Object {
-        try {
-            Remove-Item -LiteralPath $_.FullName -Recurse -Force -ErrorAction Stop
-        }
-        catch {
-            Write-Warning "旧版本仍被资源管理器占用，将在以后清理：$($_.FullName)"
-        }
+$oldVersions = Get-ChildItem -LiteralPath $installRoot -Directory -Filter "app-*"
+foreach ($oldVersion in $oldVersions) {
+    if ($oldVersion.FullName -eq $versionDirectory) {
+        continue
     }
+
+    try {
+        Remove-Item -LiteralPath $oldVersion.FullName -Recurse -Force -ErrorAction Stop
+    }
+    catch {
+        Write-Warning "The previous version is still in use and will be removed later: $($oldVersion.FullName)"
+    }
+}
 
 if ($RestartExplorer) {
     Stop-Process -Name explorer -Force -ErrorAction SilentlyContinue
     Start-Process explorer.exe
 }
 
-Write-Host "CopyShell 已为当前用户安装。"
-Write-Host "安装位置：$versionDirectory"
+Write-Host "CopyShell has been installed for the current user."
+Write-Host "Installation directory: $versionDirectory"
 if (-not $RestartExplorer) {
-    Write-Host "如果右键菜单没有立即出现，请重新启动 Windows 资源管理器。"
+    Write-Host "Restart Windows Explorer if the context menu does not appear immediately."
 }

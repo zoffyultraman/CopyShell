@@ -57,6 +57,30 @@ jobs:
         with:
           msbuild-architecture: x64
 
+      - name: Validate Windows PowerShell installer scripts
+        if: steps.solution.outputs.exists == 'true'
+        shell: powershell
+        run: |
+          $scripts = @(
+            "installer\CopyShell.Installer\install.ps1",
+            "installer\CopyShell.Installer\uninstall.ps1"
+          )
+          foreach ($script in $scripts) {
+            $tokens = $null
+            $errors = $null
+            [System.Management.Automation.Language.Parser]::ParseFile(
+              (Resolve-Path -LiteralPath $script),
+              [ref]$tokens,
+              [ref]$errors
+            ) | Out-Null
+            if ($errors.Count -gt 0) {
+              $errors | ForEach-Object {
+                Write-Output "::error file=${script}::$($_.Message)"
+              }
+              throw "Windows PowerShell 5.1 could not parse $script."
+            }
+          }
+
       - name: Restore
         if: steps.solution.outputs.exists == 'true'
         shell: pwsh
