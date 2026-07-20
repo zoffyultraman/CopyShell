@@ -246,18 +246,11 @@ jobs:
             throw "Application output was not found: $application"
           }
 
-          $startInfo = [System.Diagnostics.ProcessStartInfo]::new()
-          $startInfo.FileName = $application
-          $startInfo.WorkingDirectory = Split-Path -Parent $application
-          $startInfo.UseShellExecute = $false
-          $startInfo.ArgumentList.Add("--health-check")
-          $startedAt = Get-Date
-          $process = [System.Diagnostics.Process]::Start($startInfo)
-          if (-not $process.WaitForExit(20000)) {
-            $process.Kill($true)
-            $process.WaitForExit()
-            $process.Dispose()
-
+          function Write-AppDiagnostics(
+            [string]$Title,
+            [string]$Stage,
+            [datetime]$StartedAt
+          ) {
             $log = Join-Path `
               $env:LOCALAPPDATA `
               "CopyShell\Logs\App\$([DateTimeOffset]::UtcNow.ToString('yyyy-MM')).log"
@@ -268,47 +261,19 @@ jobs:
                 -replace "`r", "%0D" `
                 -replace "`n", "%0A"
               Write-Output `
-                "::error title=Application health check timed out::$annotation"
+                "::error title=$Title ($Stage)::$annotation"
             }
             else {
               Write-Output `
-                "::error title=Application health check timed out::The managed startup log was not created."
-            }
-
-            throw "Application health check timed out."
-          }
-
-          $exitCode = $process.ExitCode
-          $process.Dispose()
-          if ($exitCode -ne 0) {
-            $exitCodeHex = [System.BitConverter]::ToUInt32(
-              [System.BitConverter]::GetBytes([int]$exitCode),
-              0
-            ).ToString("X8")
-            Write-Output `
-              "::error title=Application health check::Exit code $exitCode (0x$exitCodeHex)"
-
-            $log = Join-Path `
-              $env:LOCALAPPDATA `
-              "CopyShell\Logs\App\$([DateTimeOffset]::UtcNow.ToString('yyyy-MM')).log"
-            if (Test-Path -LiteralPath $log) {
-              $diagnostics = Get-Content -LiteralPath $log -Raw
-              $annotation = $diagnostics `
-                -replace "%", "%25" `
-                -replace "`r", "%0D" `
-                -replace "`n", "%0A"
-              Write-Output "::error title=Application health check::$annotation"
-            }
-            else {
-              Write-Output `
-                "::error title=Application health check::The managed startup log was not created."
+                "::error title=$Title ($Stage)::The managed startup log was not created."
             }
 
             try {
+              Start-Sleep -Seconds 2
               $events = Get-WinEvent `
                 -FilterHashtable @{
                   LogName = "Application"
-                  StartTime = $startedAt.AddMinutes(-1)
+                  StartTime = $StartedAt.AddMinutes(-1)
                 } `
                 -ErrorAction Stop |
                 Where-Object {
@@ -331,14 +296,63 @@ jobs:
                   -replace "`r", "%0D" `
                   -replace "`n", "%0A"
                 Write-Output `
-                  "::error title=Windows application event::$eventText"
+                  "::error title=Windows application event ($Stage)::$eventText"
               }
             }
             catch {
               Write-Host "Could not query Windows application events: $_"
             }
+          }
 
-            throw "Application health check failed: $exitCode"
+          function Invoke-AppHealthCheck([string]$Stage) {
+            $log = Join-Path `
+              $env:LOCALAPPDATA `
+              "CopyShell\Logs\App\$([DateTimeOffset]::UtcNow.ToString('yyyy-MM')).log"
+            Remove-Item -LiteralPath $log -Force -ErrorAction SilentlyContinue
+
+            $startInfo = [System.Diagnostics.ProcessStartInfo]::new()
+            $startInfo.FileName = $application
+            $startInfo.WorkingDirectory = Split-Path -Parent $application
+            $startInfo.UseShellExecute = $false
+            $startInfo.ArgumentList.Add("--health-check")
+            if ($Stage -ne "full") {
+              $startInfo.Environment["COPYSHELL_HEALTH_CHECK_STAGE"] = $Stage
+            }
+
+            $startedAt = Get-Date
+            $process = [System.Diagnostics.Process]::Start($startInfo)
+            if (-not $process.WaitForExit(20000)) {
+              $process.Kill($true)
+              $process.WaitForExit()
+              $process.Dispose()
+              Write-AppDiagnostics `
+                "Application health check timed out" `
+                $Stage `
+                $startedAt
+              throw "Application health check timed out at stage $Stage."
+            }
+
+            $exitCode = $process.ExitCode
+            $process.Dispose()
+            if ($exitCode -ne 0) {
+              $exitCodeHex = [System.BitConverter]::ToUInt32(
+                [System.BitConverter]::GetBytes([int]$exitCode),
+                0
+              ).ToString("X8")
+              Write-Output `
+                "::error title=Application health check ($Stage)::Exit code $exitCode (0x$exitCodeHex)"
+              Write-AppDiagnostics `
+                "Application health check failed" `
+                $Stage `
+                $startedAt
+              throw "Application health check failed at stage $Stage`: $exitCode"
+            }
+
+            Write-Host "Application health check passed at stage $Stage."
+          }
+
+          foreach ($stage in @("0", "1", "2", "3", "4", "5", "full")) {
+            Invoke-AppHealthCheck $stage
           }
 
       - name: Smoke test Shell Extension

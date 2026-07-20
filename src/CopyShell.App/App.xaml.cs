@@ -113,22 +113,34 @@ public partial class App : Application
         try
         {
             AppDiagnostics.Write("Main window creation started.");
-            var mainWindow = new MainWindow(
-                request,
-                recovery,
-                queueStore,
-                workerLauncher,
-                startupMessage,
-                startupMessageIsError);
             var isHealthCheck = HasArgument(
                 Environment.GetCommandLineArgs(),
                 "--health-check");
-            if (isHealthCheck)
+            if (isHealthCheck && TryGetHealthCheckStage(out var healthCheckStage))
             {
-                mainWindow.InterfaceLoaded += OnHealthCheckInterfaceLoaded;
+                var healthCheckWindow = new HealthCheckWindow(healthCheckStage);
+                healthCheckWindow.InterfaceLoaded +=
+                    OnHealthCheckInterfaceLoaded;
+                _window = healthCheckWindow;
+            }
+            else
+            {
+                var mainWindow = new MainWindow(
+                    request,
+                    recovery,
+                    queueStore,
+                    workerLauncher,
+                    startupMessage,
+                    startupMessageIsError);
+                if (isHealthCheck)
+                {
+                    mainWindow.InterfaceLoaded +=
+                        OnHealthCheckInterfaceLoaded;
+                }
+
+                _window = mainWindow;
             }
 
-            _window = mainWindow;
             _window.Activate();
             AppDiagnostics.Write("Main window activated.");
         }
@@ -159,6 +171,11 @@ public partial class App : Application
         {
             mainWindow.InterfaceLoaded -= OnHealthCheckInterfaceLoaded;
         }
+        else if (sender is HealthCheckWindow healthCheckWindow)
+        {
+            healthCheckWindow.InterfaceLoaded -=
+                OnHealthCheckInterfaceLoaded;
+        }
 
         try
         {
@@ -178,6 +195,13 @@ public partial class App : Application
 
         Exit();
     }
+
+    private static bool TryGetHealthCheckStage(out int stage) =>
+        int.TryParse(
+            Environment.GetEnvironmentVariable(
+                "COPYSHELL_HEALTH_CHECK_STAGE"),
+            out stage) &&
+        stage is >= 0 and <= 5;
 
     private static string? FindRequestPath(IReadOnlyList<string> arguments)
     {
