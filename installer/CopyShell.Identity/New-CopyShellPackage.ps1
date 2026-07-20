@@ -117,9 +117,11 @@ $manifestPath = Join-Path $stage "AppxManifest.xml"
 $manifest | Set-Content -LiteralPath $manifestPath -Encoding utf8NoBOM
 
 $makeAppx = Find-WindowsSdkTool "makeappx.exe"
-& $makeAppx pack /d $stage /p $packagePath /o
-if ($LASTEXITCODE -ne 0) {
-    throw "MSIX 打包失败，退出码：$LASTEXITCODE"
+$makeAppxOutput = & $makeAppx pack /d $stage /p $packagePath /o 2>&1
+$makeAppxExitCode = $LASTEXITCODE
+$makeAppxOutput | Write-Host
+if ($makeAppxExitCode -ne 0) {
+    throw "MSIX 打包失败，退出码：$makeAppxExitCode。$($makeAppxOutput -join ' ')"
 }
 
 $hasCertificate = -not [string]::IsNullOrWhiteSpace(

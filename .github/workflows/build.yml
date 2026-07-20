@@ -272,15 +272,19 @@ jobs:
         if: steps.solution.outputs.exists == 'true'
         shell: pwsh
         run: |
-          $revision = [int]("${{ github.run_number }}") % 65535
-          & "installer\CopyShell.Identity\New-CopyShellPackage.ps1" `
-            -PublishDirectory "artifacts\publish\$env:RUNTIME_IDENTIFIER" `
-            -ShellExtension "artifacts\publish\$env:RUNTIME_IDENTIFIER\CopyShell.ShellExtension.dll" `
-            -OutputDirectory "artifacts\package" `
-            -Version "0.2.0.$revision" `
-            -Publisher "CN=CopyShell Development"
-          if ($LASTEXITCODE -ne 0) {
-            exit $LASTEXITCODE
+          try {
+            $revision = [int]("${{ github.run_number }}") % 65535
+            & "installer\CopyShell.Identity\New-CopyShellPackage.ps1" `
+              -PublishDirectory "artifacts\publish\$env:RUNTIME_IDENTIFIER" `
+              -ShellExtension "artifacts\publish\$env:RUNTIME_IDENTIFIER\CopyShell.ShellExtension.dll" `
+              -OutputDirectory "artifacts\package" `
+              -Version "0.2.0.$revision" `
+              -Publisher "CN=CopyShell Development"
+          }
+          catch {
+            $message = $_.Exception.Message.Replace("`r", " ").Replace("`n", " ")
+            Write-Output "::error title=MSIX validation::$message"
+            throw
           }
 
       - name: Upload build artifacts
