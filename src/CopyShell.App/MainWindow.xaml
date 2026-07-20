@@ -74,8 +74,7 @@
                         <TextBox
                             x:Name="DestinationBox"
                             Grid.Column="0"
-                            PlaceholderText="选择目标文件夹"
-                            TextChanged="OnDestinationChanged" />
+                            PlaceholderText="选择目标文件夹" />
                         <Button
                             Grid.Column="1"
                             Click="OnBrowseClicked"
@@ -184,7 +183,6 @@
                         x:Name="QueueList"
                         MinHeight="150"
                         MaxHeight="290"
-                        SelectionChanged="OnQueueSelectionChanged"
                         SelectionMode="Single">
                         <ListView.ItemTemplate>
                             <DataTemplate>

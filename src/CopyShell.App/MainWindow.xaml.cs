@@ -44,6 +44,8 @@ public sealed partial class MainWindow : Window
         AppDiagnostics.Write("MainWindow.InitializeComponent started.");
         InitializeComponent();
         AppDiagnostics.Write("MainWindow.InitializeComponent completed.");
+        DestinationBox.TextChanged += OnDestinationChanged;
+        QueueList.SelectionChanged += OnQueueSelectionChanged;
         _queueStore = queueStore;
         _workerLauncher = workerLauncher;
         _hasTaskContext = request is not null || recovery is not null;
@@ -520,6 +522,8 @@ public sealed partial class MainWindow : Window
     {
         _queueRefreshTimer.Stop();
         _queueRefreshTimer.Tick -= OnQueueRefreshTick;
+        DestinationBox.TextChanged -= OnDestinationChanged;
+        QueueList.SelectionChanged -= OnQueueSelectionChanged;
         Closed -= OnWindowClosed;
     }
 
