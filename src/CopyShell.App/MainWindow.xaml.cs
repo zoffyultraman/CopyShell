@@ -394,7 +394,7 @@ public sealed partial class MainWindow : Window
         var progress = GetProgress(selected.Entry);
         if (progress is not null)
         {
-            DisplayProgress(progress);
+            DisplayProgress(progress, appendLog: false);
         }
     }
 
@@ -486,7 +486,7 @@ public sealed partial class MainWindow : Window
                     _latestProgress.Remove(entry.TaskId);
                 }
 
-                _ = RefreshQueueAsync(entry.TaskId);
+                _ = RefreshQueueAsync();
             });
 
     private void OnQueueProgressChanged(Guid taskId, CopyProgress update) =>
@@ -605,7 +605,9 @@ public sealed partial class MainWindow : Window
                     current.EstimatedRemaining ?? previous.EstimatedRemaining
             };
 
-    private void DisplayProgress(CopyProgress progress)
+    private void DisplayProgress(
+        CopyProgress progress,
+        bool appendLog = true)
     {
         ProgressArea.Visibility = Visibility.Visible;
         LogExpander.Visibility = Visibility.Visible;
@@ -629,7 +631,7 @@ public sealed partial class MainWindow : Window
             ProgressDetailsText.Visibility = Visibility.Collapsed;
         }
 
-        if (!string.IsNullOrWhiteSpace(progress.Message))
+        if (appendLog && !string.IsNullOrWhiteSpace(progress.Message))
         {
             AppendLog(progress.Message);
         }
